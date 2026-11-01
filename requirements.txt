@@ -1,0 +1,4 @@
+anthropic>=2.3,<3
+voyageai>=0.5,<1
+supabase>=2.33,<3
+python-dotenv>=1.2,<2

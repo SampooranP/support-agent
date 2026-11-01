@@ -44,11 +44,67 @@ agent/        agent loop, prompts, approval logic, memory
 web/          chat UI + approvals dashboard
 evals/        test tickets, scoring scripts, results
 docs/         sample company knowledge base
+supabase/     database migrations
 ```
+
+## Setup
+
+Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API keys for [Anthropic](https://console.anthropic.com) and [Voyage AI](https://www.voyageai.com).
+
+1. **Install dependencies**
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate        # Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+2. **Add your keys.** Copy `.env.example` to `.env` and fill in `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Supabase: **Project Settings → API**). `.env` is git-ignored; never commit it.
+
+3. **Create the database objects.** In the Supabase dashboard, open **SQL Editor**, paste the contents of [`supabase/migrations/20261101000000_doc_chunks.sql`](supabase/migrations/20261101000000_doc_chunks.sql) and run it. This enables pgvector, creates the `doc_chunks` table (with an HNSW index and row-level security) and the `match_doc_chunks` similarity-search function. If you use the Supabase CLI, `supabase db push` applies it instead.
+
+## Run
+
+Run these from the repo root.
+
+**Ingest the knowledge base** (load → chunk → embed with Voyage `voyage-3.5` → store in Supabase). Re-running replaces each document's chunks, so it's safe to run after editing `docs/`.
+
+```bash
+python -m ingestion.ingest --dry-run   # preview the chunks; no API calls
+python -m ingestion.ingest
+```
+
+**Ask a question.** The script embeds the question, retrieves the top 5 chunks by cosine similarity, and has Claude answer with citations to the source docs.
+
+```bash
+python -m agent.rag_qa "My order arrived damaged, can I get a refund?"
+python -m agent.rag_qa --show-chunks "How long does expedited shipping take?"
+python -m agent.rag_qa                 # interactive mode
+```
+
+Example output:
+
+```
+$ python -m agent.rag_qa "My Ember kettle display shows E1, what do I do?"
+An **E1** code means the kettle was switched on empty or with too little water.[1]
+
+To fix it, let it cool for 15 minutes, add water above the MIN line, and try again.[1] Just be careful
+not to go too far: never fill above the MAX line.[2] Overfilled water can spray out when it boils.[2]
+
+If the E1 code keeps appearing even with the right amount of water, please contact our support team.
+
+Sources:
+  [1] products/ember-electric-kettle.md - Troubleshooting
+  [2] products/ember-electric-kettle.md - Safety warnings
+```
+
+Questions the docs don't cover (e.g. "What's your CEO's name?") get an "I don't have that information" answer that points to support, rather than a guess.
+
+> **Voyage free tier:** without a payment method on your Voyage account, requests are limited to 3 per minute. Ingestion embeds all chunks in a single request and the client retries with backoff when rate-limited, so everything still works, but asking several questions in a row can pause for a few seconds.
 
 ## Roadmap
 
-- [ ] Sample knowledge base + ingestion pipeline + basic RAG Q&A
+- [x] Sample knowledge base + ingestion pipeline + basic RAG Q&A
 - [ ] MCP server with order and customer tools
 - [ ] Human approval flow, dashboard and streaming chat UI
 - [ ] Eval suite, tracing, guardrails and CI
