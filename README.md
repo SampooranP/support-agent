@@ -67,7 +67,7 @@ Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API k
    |---|---|
    | [`supabase/migrations/20261101000000_doc_chunks.sql`](supabase/migrations/20261101000000_doc_chunks.sql) | Enables pgvector; creates the `doc_chunks` table (HNSW index) and the `match_doc_chunks` similarity-search function |
    | [`supabase/migrations/20261102000000_customers_orders.sql`](supabase/migrations/20261102000000_customers_orders.sql) | Creates the `customers`, `orders` and `order_items` tables |
-   | [`supabase/seed.sql`](supabase/seed.sql) | Loads 5 sample customers and 8 orders. **Re-running it wipes and reloads those tables.** |
+   | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. **The function wipes and reloads those tables**, which keeps the order dates fresh; the smoke test calls it before each run. Development only. |
 
    Every table has row-level security on with no policies, so only the service-role key (used by the backend) can access it.
 
@@ -122,14 +122,14 @@ Questions the docs don't cover (e.g. "What's your CEO's name?") get an "I don't 
 Both are read-only. Unknown orders or customers return an error message the model can act on (for example, "No order #9999 found").
 
 ```bash
-python mcp-server/smoke_test.py   # launches the server over stdio and checks each tool against the seed data
+python mcp-server/smoke_test.py   # reloads the demo data, launches the server over stdio, checks each tool
 python mcp-server/server.py       # run the server on stdio (normally started by an MCP client)
 ```
 
-To try the tools from Claude Code, register the server from the repo root (on macOS/Linux use `.venv/bin/python`):
+To try the tools from Claude Code, register the server with absolute paths, so it starts no matter which folder Claude Code runs in (on Windows the interpreter is `.venv\Scripts\python.exe`):
 
 ```bash
-claude mcp add lumen-pine-support -- .venv/Scripts/python mcp-server/server.py
+claude mcp add lumen-pine-support -- /path/to/support-agent/.venv/bin/python /path/to/support-agent/mcp-server/server.py
 ```
 
 ## Roadmap

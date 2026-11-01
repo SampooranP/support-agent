@@ -1,20 +1,36 @@
 """Launch the MCP server over stdio and check each tool against the seed data.
 
-Usage (from the repo root, after running supabase/seed.sql):
+Reloads the demo data first (supabase/seed.sql's reset_demo_data()), so the
+date-based checks hold no matter when the seed was last run.
+
+Usage (from the repo root, after running supabase/seed.sql once):
     python mcp-server/smoke_test.py
 """
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 from mcp import Client, StdioServerParameters
+from supabase import create_client
 
 SERVER = Path(__file__).resolve().parent / "server.py"
+load_dotenv(SERVER.parent.parent / ".env")
+
+
+def reset_demo_data() -> None:
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        raise SystemExit("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env")
+    create_client(url, key).rpc("reset_demo_data").execute()
+    print("demo data reset")
 
 
 async def main() -> None:
+    reset_demo_data()
     params = StdioServerParameters(command=sys.executable, args=[str(SERVER)])
     failures = 0
 
