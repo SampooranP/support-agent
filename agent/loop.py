@@ -10,19 +10,23 @@ The full message history is stored in Supabase, so a paused conversation survive
 restarts and can be resumed by a later request.
 """
 
+import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import anthropic
-import anyio
 
 from agent import store
 from agent.prompts import system_prompt
+from agent.store import in_thread
 from agent.tools import RISKY_TOOLS, STATUS_LABELS, ApprovalNeeded, Toolbox, ToolResult
 
 MODEL = "claude-opus-5-5"
 MAX_TOOL_ROUNDS = 12  # per turn, as a backstop against loops
+INTERRUPTED = "This tool call was interrupted by an internal error and did not complete."
 Emit = Callable[[dict], Awaitable[None]]
+log = logging.getLogger("agent")
 
 
 async def _ignore(_: dict) -> None:
@@ -39,36 +43,22 @@ class Agent:
         await self._run(conversation, emit)
 
     async def resume_after_decisions(self, conversation: dict, emit: Emit = _ignore) -> bool:
-        """If every approval in the paused turn is decided, finish the turn. Returns True if it resumed."""
+        """If every approval in the paused turn is decided, finish the turn. Returns True if it resumed.
+
+        Safe to call again after a failure: each approval's stored status says what already happened,
+        so an action that ran is never run twice or reported as rejected. An unexpected error while
+        running an approved action propagates, leaving it "approved" and the conversation paused,
+        so the caller can retry.
+        """
         pending = conversation["pending_turn"]
-        approvals = {a["tool_use_id"]: a for a in await _thread(store.list_approvals, None, conversation["id"])}
+        approvals = {a["tool_use_id"]: a for a in await in_thread(store.list_approvals, None, conversation["id"])}
         if any(approvals[i]["status"] == "pending" for i in pending["awaiting"]):
             return False
 
         results = pending["results"]
         for tool_use_id in pending["awaiting"]:
-            approval = approvals[tool_use_id]
-            if approval["status"] == "approved":
-                await emit({"type": "tool", "name": approval["tool_name"], "status": "running",
-                            "label": STATUS_LABELS[approval["tool_name"]]})
-                result = await self.toolbox.run(approval["tool_name"], _model_input(approval), conversation,
-                                                approval_id=approval["id"])
-                # Say what happened in words: to Claude, the call just returned, with no sign a human was involved.
-                if result.is_error:
-                    await _thread(store.mark_approval_failed, approval["id"], str(result.content))
-                    result = ToolResult(f"A support supervisor approved this, but it failed: {result.content}",
-                                        is_error=True)
-                else:
-                    done = "The refund has been issued" if approval["tool_name"] == "issue_refund" else "The email has been sent"
-                    result = ToolResult(f"A support supervisor approved this request and it is complete. {done}. "
-                                        f"Record: {result.content}")
-                await emit({"type": "tool", "name": approval["tool_name"],
-                            "status": "error" if result.is_error else "done"})
-            else:
-                note = f" Reviewer's note: {approval['reviewer_note']}" if approval["reviewer_note"] else ""
-                result = ToolResult(f"A support supervisor rejected this action, so it was not carried out.{note}",
-                                    is_error=True)
-            results[tool_use_id] = result.as_block(tool_use_id)
+            outcome = await self._approval_outcome(approvals[tool_use_id], conversation, emit)
+            results[tool_use_id] = outcome.as_block(tool_use_id)
 
         conversation["messages"].append({"role": "user", "content": [results[i] for i in pending["order"]]})
         conversation["pending_turn"] = None
@@ -76,12 +66,41 @@ class Agent:
         await self._run(conversation, emit)
         return True
 
-    async def _run(self, conversation: dict, emit: Emit) -> None:
-        customer = await _thread(store.get_customer_by_email, conversation["customer_email"])
-        system = system_prompt(customer["name"], customer["email"])
-        messages = conversation["messages"]
+    async def _approval_outcome(self, approval: dict, conversation: dict, emit: Emit) -> ToolResult:
+        """The tool result Claude gets for a decided approval, running the action first if it's approved.
 
+        The result says what happened in words: to Claude, the tool call just returned, with no sign
+        a human was involved.
+        """
+        name, status = approval["tool_name"], approval["status"]
+        if status == "approved":
+            await emit({"type": "tool", "name": name, "status": "running", "label": STATUS_LABELS[name]})
+            result = await self.toolbox.run(name, _model_input(approval), conversation, approval_id=approval["id"])
+            await emit({"type": "tool", "name": name, "status": "error" if result.is_error else "done"})
+            if result.is_error:  # refused by the tool or database (e.g. over the refundable amount)
+                await in_thread(store.mark_approval_failed, approval["id"], str(result.content))
+                status, approval["result"] = "failed", {"error": str(result.content)}
+            else:  # the database marked it executed
+                status, approval["result"] = "executed", json.loads(result.content)
+
+        if status == "executed":
+            done = "The refund has been issued" if name == "issue_refund" else "The email has been sent"
+            return ToolResult(f"A support supervisor approved this request and it is complete. {done}. "
+                              f"Record: {json.dumps(approval['result'], default=str)}")
+        if status == "failed":
+            error = (approval.get("result") or {}).get("error", "unknown error")
+            return ToolResult(f"A support supervisor approved this, but it failed: {error}", is_error=True)
+        note = f" Reviewer's note: {approval['reviewer_note']}" if approval.get("reviewer_note") else ""
+        return ToolResult(f"A support supervisor rejected this action, so it was not carried out.{note}",
+                          is_error=True)
+
+    async def _run(self, conversation: dict, emit: Emit) -> None:
+        """Run Claude until the turn ends. Errors are reported to the client, never raised, and the
+        conversation is always saved in a state the next request can continue from."""
+        messages = conversation["messages"]
         try:
+            customer = await in_thread(store.get_customer_by_email, conversation["customer_email"])
+            system = system_prompt(customer["name"], customer["email"])
             for _ in range(MAX_TOOL_ROUNDS):
                 response = await self._stream(system, messages, emit)
                 content, tool_uses = _history_content(response.content)
@@ -110,8 +129,12 @@ class Agent:
                 messages.append({"role": "user", "content": [results[t.id] for t in tool_uses]})
             else:
                 await emit({"type": "error", "message": "Stopped after too many tool calls."})
+        except Exception:
+            log.exception("agent turn failed")
+            await emit({"type": "error", "message": "Something went wrong. Please try again."})
         finally:
-            await _thread(store.save_conversation, conversation)
+            _close_dangling_tool_uses(conversation)
+            await in_thread(store.save_conversation, conversation)
             await emit({"type": "done", "status": conversation["status"]})
 
     async def _stream(self, system: str, messages: list[dict], emit: Emit):
@@ -140,11 +163,14 @@ class Agent:
                     return message
             except ValueError:
                 # Tool input JSON the SDK couldn't parse at all (possible with eager input streaming).
-                # Nothing was appended to history, so re-issue the turn.
+                # Nothing was appended to history, so re-issue the turn; "retry" tells the client to
+                # discard the text this attempt already streamed.
                 if attempt == 2:
                     raise
+                await emit({"type": "retry"})
 
     async def _run_tools(self, conversation: dict, tool_uses: list, emit: Emit) -> tuple[dict, list[str]]:
+        """Run (or hold for approval) each tool call. Every call gets a result, even if its tool fails."""
         results: dict[str, Any] = {}
         awaiting: list[str] = []
         for tool_use in tool_uses:
@@ -158,23 +184,45 @@ class Agent:
                 label += f" #{str(tool_use.input['order_number']).lstrip('#')}"
             await emit({"type": "tool", "name": tool_use.name, "status": "running", "label": label})
 
-            if tool_use.name in RISKY_TOOLS:
-                check = await self.toolbox.check_risky(tool_use.name, tool_use.input, conversation)
-                if isinstance(check, ApprovalNeeded):
-                    approval = await _thread(store.create_approval, conversation["id"], tool_use.id,
-                                             check.tool_name, check.tool_input, check.summary)
-                    awaiting.append(tool_use.id)
-                    results[tool_use.id] = None  # filled in after the decision
-                    await emit({"type": "approval", "id": approval["id"], "tool_name": check.tool_name,
-                                "summary": check.summary})
-                    continue
-                result = check
-            else:
-                result = await self.toolbox.run(tool_use.name, tool_use.input, conversation)
+            try:
+                if tool_use.name in RISKY_TOOLS:
+                    check = await self.toolbox.check_risky(tool_use.name, tool_use.input, conversation)
+                    if isinstance(check, ApprovalNeeded):
+                        approval = await in_thread(store.create_approval, conversation["id"], tool_use.id,
+                                                   check.tool_name, check.tool_input, check.summary)
+                        awaiting.append(tool_use.id)
+                        results[tool_use.id] = None  # filled in after the decision
+                        await emit({"type": "approval", "id": approval["id"], "tool_name": check.tool_name,
+                                    "summary": check.summary})
+                        continue
+                    result = check
+                else:
+                    result = await self.toolbox.run(tool_use.name, tool_use.input, conversation)
+            except Exception:
+                # A network or database error. Claude gets an error result instead of the turn crashing,
+                # which would leave a tool_use with no tool_result and break the conversation.
+                log.exception("tool %s failed", tool_use.name)
+                result = ToolResult(INTERRUPTED, is_error=True)
 
             results[tool_use.id] = result.as_block(tool_use.id)
             await emit({"type": "tool", "name": tool_use.name, "status": "error" if result.is_error else "done"})
         return results, awaiting
+
+
+def _close_dangling_tool_uses(conversation: dict) -> None:
+    """If a turn stopped right after Claude asked for tools (an error mid-turn), answer those calls with
+    errors. The Messages API rejects any history with a tool_use that has no tool_result."""
+    if conversation["status"] == "awaiting_approval":
+        return  # the results are held in pending_turn until the approvals are decided
+    messages = conversation["messages"]
+    last = messages[-1] if messages else None
+    if not last or last["role"] != "assistant" or isinstance(last["content"], str):
+        return
+    ids = [b["id"] for b in last["content"] if b["type"] == "tool_use"]
+    if ids:
+        messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": i, "content": INTERRUPTED, "is_error": True} for i in ids
+        ]})
 
 
 def _history_content(blocks) -> tuple[list[dict], list]:
@@ -214,10 +262,6 @@ def _model_input(approval: dict) -> dict:
     if approval["tool_name"] == "send_email":
         tool_input.pop("to", None)
     return tool_input
-
-
-async def _thread(fn, *args):
-    return await anyio.to_thread.run_sync(lambda: fn(*args))
 
 
 def transcript(conversation: dict, approvals: list[dict]) -> list[dict]:

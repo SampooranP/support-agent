@@ -36,6 +36,21 @@ def voyage_client():
 
 @cache
 def supabase_client():
+    import httpx
     from supabase import create_client
 
-    return create_client(require_env("SUPABASE_URL"), require_env("SUPABASE_SERVICE_ROLE_KEY"))
+    client = create_client(require_env("SUPABASE_URL"), require_env("SUPABASE_SERVICE_ROLE_KEY"))
+    # supabase-py talks to the database API over HTTP/2. With one client shared across threads (the agent
+    # API runs store calls in worker threads), the HTTP/2 connection intermittently fails with "Server
+    # disconnected". HTTP/1.1 connection pooling is thread-safe and reconnects cleanly, so use that.
+    postgrest = client.postgrest
+    http2_session = postgrest.session
+    postgrest.session = httpx.Client(
+        base_url=http2_session.base_url,
+        headers=http2_session.headers,
+        timeout=http2_session.timeout,
+        follow_redirects=True,
+        http2=False,
+    )
+    http2_session.close()
+    return client

@@ -149,9 +149,10 @@ Guardrails in [`agent/tools.py`](agent/tools.py): customers can only see their o
 ```bash
 uvicorn agent.api:app --port 8000      # start the API (http://localhost:8000/docs for the endpoint list)
 python -m agent.scenario_test          # in another terminal: end-to-end scenarios with real Claude calls
+python -m agent.resilience_test        # failure handling with injected errors (no Claude calls, no server needed)
 ```
 
-The scenarios reset the demo data, then check that a damaged-item refund pauses for approval, that a rejection is reported and nothing is refunded, that an approval creates exactly one refund, that another customer's order isn't revealed, and that a Final Sale item gets no refund.
+The scenarios reset the demo data, then check that a damaged-item refund pauses for approval, that a rejection is reported and nothing is refunded, that an approval creates exactly one refund, that another customer's order isn't revealed, and that a Final Sale item gets no refund. The resilience tests inject failures (a crashing tool, a resume that dies mid-refund, an unavailable Claude API) and check that conversations stay usable, a retried resume never refunds twice, and errors reach the client exactly once.
 
 > **No authentication yet:** the demo signs in by picking a customer, and the approval endpoints are open. Fine on localhost; authentication comes before deployment.
 

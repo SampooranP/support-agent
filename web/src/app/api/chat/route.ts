@@ -6,6 +6,7 @@ import type { ConversationStatus, SupportUIMessage, ToolStep } from "@/lib/types
 // Events from the Python agent API (see agent/api.py).
 type AgentEvent =
   | { type: "status"; text: string }
+  | { type: "retry" }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: ToolStep["status"]; label?: string }
   | { type: "approval"; id: string; tool_name: string; summary: string }
@@ -46,17 +47,32 @@ export async function POST(req: Request) {
 
       let textId: string | null = null;
       let segment = 0;
+      let inStep = false;
       const toolParts = new Map<string, { id: string; label: string }>(); // running tool name -> its part
 
       const endText = () => {
         if (textId) writer.write({ type: "text-end", id: textId });
         textId = null;
       };
+      // Each model call is a step, so a retried call can discard just its own partial output.
+      const endStep = () => {
+        endText();
+        if (inStep) writer.write({ type: "finish-step" });
+        inStep = false;
+      };
 
       for await (const event of readEvents<AgentEvent>(body)) {
         switch (event.type) {
           case "status":
+            endStep();
+            writer.write({ type: "start-step" });
+            inStep = true;
             writer.write({ type: "data-status", data: { text: event.text }, transient: true });
+            break;
+          case "retry":
+            // The agent is re-sending a model call: remove the text the failed attempt streamed.
+            textId = null;
+            writer.write({ type: "reset-step" });
             break;
           case "text":
             if (!textId) {
@@ -104,12 +120,12 @@ export async function POST(req: Request) {
             writer.write({ type: "data-notice", id: `notice-${segment++}`, data: { message: event.message } });
             break;
           case "done":
-            endText();
+            endStep();
             writer.write({ type: "data-conversation", data: { status: event.status }, transient: true });
             break;
         }
       }
-      endText();
+      endStep();
     },
   });
 

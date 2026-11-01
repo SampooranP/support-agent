@@ -29,11 +29,14 @@ export function Approvals() {
 
   const load = useCallback(async () => {
     try {
-      const [p, all] = await Promise.all([fetch("/api/approvals?status=pending"), fetch("/api/approvals?status=")]);
-      const [pendingBody, allBody] = await Promise.all([p.json(), all.json()]);
+      const [p, decided] = await Promise.all([
+        fetch("/api/approvals?status=pending"),
+        fetch("/api/approvals?status=approved,executed,rejected,failed&limit=10"),
+      ]);
+      const [pendingBody, decidedBody] = await Promise.all([p.json(), decided.json()]);
       if (!p.ok) throw new Error(detailMessage(pendingBody, "Couldn't load approvals"));
       setPending(pendingBody);
-      setRecent((allBody as ApprovalRequest[]).filter((a) => a.status !== "pending").slice(0, 10));
+      if (decided.ok) setRecent(decidedBody);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
