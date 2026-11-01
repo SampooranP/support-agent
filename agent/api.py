@@ -16,6 +16,7 @@ Stream events (one JSON object per `data:` line):
     {"type": "text", "delta": "..."}
     {"type": "tool", "name": "get_order", "status": "running" | "done" | "error", "label": "..."}
     {"type": "approval", "id": "...", "tool_name": "issue_refund", "summary": "..."}
+    {"type": "sources", "items": ["refund-policy.md - Damaged or defective items", ...]}
     {"type": "error", "message": "..."}
     {"type": "done", "status": "active" | "awaiting_approval"}
 """

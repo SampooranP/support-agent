@@ -133,7 +133,11 @@ class Agent:
                     async for event in stream:
                         if event.type == "text":
                             await emit({"type": "text", "delta": event.text})
-                    return await stream.get_final_message()
+                    message = await stream.get_final_message()
+                    sources = _cited_sources(b.model_dump(mode="json") for b in message.content)
+                    if sources:
+                        await emit({"type": "sources", "items": sources})
+                    return message
             except ValueError:
                 # Tool input JSON the SDK couldn't parse at all (possible with eager input streaming).
                 # Nothing was appended to history, so re-issue the turn.
@@ -191,6 +195,19 @@ def _history_content(blocks) -> tuple[list[dict], list]:
     return content, tool_uses
 
 
+def _cited_sources(blocks) -> list[str]:
+    """The distinct knowledge-base sections cited by a message's text blocks, in order."""
+    sources: list[str] = []
+    for block in blocks:
+        if block.get("type") != "text":
+            continue
+        for citation in block.get("citations") or []:
+            label = citation.get("title") or citation.get("source")
+            if label and label not in sources:
+                sources.append(label)
+    return sources
+
+
 def _model_input(approval: dict) -> dict:
     """The approved input, as Claude's tool schema shapes it (the agent adds hidden fields itself)."""
     tool_input = dict(approval["tool_input"])
@@ -216,21 +233,18 @@ def transcript(conversation: dict, approvals: list[dict]) -> list[dict]:
         if isinstance(content, str):
             items.append({"role": "assistant", "text": content, "sources": []})
             continue
-        text, sources = "", []
+        text, text_blocks = "", []
 
         def flush():
-            nonlocal text, sources
+            nonlocal text, text_blocks
             if text.strip():
-                items.append({"role": "assistant", "text": text.strip(), "sources": sources})
-            text, sources = "", []
+                items.append({"role": "assistant", "text": text.strip(), "sources": _cited_sources(text_blocks)})
+            text, text_blocks = "", []
 
         for block in content:
             if block["type"] == "text":
                 text += block["text"]
-                for citation in block.get("citations", []):
-                    label = citation.get("title") or citation.get("source")
-                    if label and label not in sources:
-                        sources.append(label)
+                text_blocks.append(block)
             elif block["type"] == "tool_use":
                 flush()  # text before a tool call is shown before the tool step
                 step = {"role": "tool", "name": block["name"], "label": STATUS_LABELS.get(block["name"], block["name"])}

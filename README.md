@@ -49,7 +49,7 @@ supabase/     database migrations
 
 ## Setup
 
-Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API keys for [Anthropic](https://console.anthropic.com) and [Voyage AI](https://www.voyageai.com).
+Requires Python 3.11+, Node.js 20+ (for the web UI) and a [Supabase](https://supabase.com) project, plus API keys for [Anthropic](https://console.anthropic.com) and [Voyage AI](https://www.voyageai.com).
 
 1. **Install dependencies**
 
@@ -57,6 +57,7 @@ Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API k
    python -m venv .venv
    source .venv/bin/activate        # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
+   cd web && npm install && cd ..
    ```
 
 2. **Add your keys.** Copy `.env.example` to `.env` and fill in `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Supabase: **Project Settings → API**). `.env` is git-ignored; never commit it.
@@ -154,11 +155,25 @@ The scenarios reset the demo data, then check that a damaged-item refund pauses 
 
 > **No authentication yet:** the demo signs in by picking a customer, and the approval endpoints are open. Fine on localhost; authentication comes before deployment.
 
+### Chat UI and approvals dashboard
+
+[`web/`](web/) is a Next.js app with two pages. Run the agent API and the web app in two terminals:
+
+```bash
+uvicorn agent.api:app --port 8000      # terminal 1, from the repo root
+cd web && npm run dev                  # terminal 2, then open http://localhost:3000
+```
+
+- **Chat** (`/`): pick a demo customer and ask a question, such as Maya's "My order #1042 arrived with two snapped tent poles. Can I get a refund?" Replies stream in with tool steps, cited sources, and an approval card when the agent asks to refund or email.
+- **Approvals** (`/approvals`): the supervisor's queue. Approve or reject each request, optionally with a note. The chat picks up the outcome within a few seconds and the agent tells the customer what happened.
+
+The browser only talks to the Next.js server; its `/api/*` routes forward to the agent API (set `AGENT_API_URL` if it isn't on `http://localhost:8000`).
+
 ## Roadmap
 
 - [x] Sample knowledge base + ingestion pipeline + basic RAG Q&A
 - [x] MCP server with order and customer tools
-- [ ] Human approval flow, dashboard and streaming chat UI
+- [x] Human approval flow, dashboard and streaming chat UI
 - [ ] Eval suite, tracing, guardrails and CI
 - [ ] Multi-agent routing (billing / shipping / tech support), deployment
 
