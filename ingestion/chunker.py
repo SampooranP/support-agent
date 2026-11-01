@@ -74,14 +74,44 @@ def _sections(text: str) -> list[tuple[str | None, str]]:
 def _split_paragraphs(body: str, max_chars: int) -> list[str]:
     if len(body) <= max_chars:
         return [body]
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    paragraphs = [
+        part
+        for p in re.split(r"\n\s*\n", body)
+        if p.strip()
+        for part in _split_long(p.strip(), max_chars)
+    ]
     pieces: list[str] = []
     current: list[str] = []
     for para in paragraphs:
         if current and len("\n\n".join(current + [para])) > max_chars:
             pieces.append("\n\n".join(current))
-            current = [current[-1]]  # overlap: carry the last paragraph forward
+            # Overlap: carry the last paragraph forward, but only if it still fits with the next one.
+            last = current[-1]
+            current = [last] if len(last) + 2 + len(para) <= max_chars else []
         current.append(para)
     if current:
         pieces.append("\n\n".join(current))
     return pieces
+
+
+def _split_long(paragraph: str, max_chars: int) -> list[str]:
+    """Split a paragraph longer than max_chars on line breaks (tables, lists), then on hard length."""
+    if len(paragraph) <= max_chars:
+        return [paragraph]
+    parts: list[str] = []
+    current = ""
+    for line in paragraph.splitlines():
+        while len(line) > max_chars:
+            if current:
+                parts.append(current)
+                current = ""
+            parts.append(line[:max_chars])
+            line = line[max_chars:]
+        if current and len(current) + 1 + len(line) > max_chars:
+            parts.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        parts.append(current)
+    return parts

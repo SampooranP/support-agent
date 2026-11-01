@@ -5,9 +5,12 @@ from ingestion.config import CHUNKS_TABLE, MATCH_FUNCTION, supabase_client
 
 
 def replace_document_chunks(source: str, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
-    """Replace all stored chunks for one document, so re-running ingestion is idempotent."""
+    """Replace all stored chunks for one document, so re-running ingestion is idempotent.
+
+    Upserts first and only then trims chunks past the new end, so a failed run never
+    leaves a document missing from the table.
+    """
     db = supabase_client()
-    db.table(CHUNKS_TABLE).delete().eq("source", source).execute()
     rows = [
         {
             "source": c.source,
@@ -20,14 +23,21 @@ def replace_document_chunks(source: str, chunks: list[Chunk], embeddings: list[l
         for c, e in zip(chunks, embeddings, strict=True)
     ]
     if rows:
-        db.table(CHUNKS_TABLE).insert(rows).execute()
+        db.table(CHUNKS_TABLE).upsert(rows, on_conflict="source,chunk_index", returning="minimal").execute()
+    db.table(CHUNKS_TABLE).delete(returning="minimal").eq("source", source).gte("chunk_index", len(rows)).execute()
 
 
 def delete_missing_documents(keep_sources: set[str]) -> list[str]:
     """Remove chunks for documents that no longer exist in docs/. Returns removed sources."""
     db = supabase_client()
-    stored = db.table(CHUNKS_TABLE).select("source").execute().data
-    removed = sorted({row["source"] for row in stored} - keep_sources)
+    stored: set[str] = set()
+    page = 1000  # Supabase returns at most 1000 rows per request, so read in pages
+    for start in range(0, 10**9, page):
+        rows = db.table(CHUNKS_TABLE).select("source").order("id").range(start, start + page - 1).execute().data
+        stored.update(row["source"] for row in rows)
+        if len(rows) < page:
+            break
+    removed = sorted(stored - keep_sources)
     for source in removed:
         db.table(CHUNKS_TABLE).delete().eq("source", source).execute()
     return removed
