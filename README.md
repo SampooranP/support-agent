@@ -67,7 +67,8 @@ Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API k
    |---|---|
    | [`supabase/migrations/20261101000000_doc_chunks.sql`](supabase/migrations/20261101000000_doc_chunks.sql) | Enables pgvector; creates the `doc_chunks` table (HNSW index) and the `match_doc_chunks` similarity-search function |
    | [`supabase/migrations/20261102000000_customers_orders.sql`](supabase/migrations/20261102000000_customers_orders.sql) | Creates the `customers`, `orders` and `order_items` tables |
-   | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. **The function wipes and reloads those tables**, which keeps the order dates fresh; the smoke test calls it before each run. Development only. |
+   | [`supabase/migrations/20261103000000_doc_chunks_rpcs.sql`](supabase/migrations/20261103000000_doc_chunks_rpcs.sql) | Adds `replace_doc_chunks` (re-ingests a document in one transaction) and `doc_chunk_sources` |
+   | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. The function wipes and reloads those tables, which keeps the order dates fresh; the smoke test calls it before each run. It refuses to run if the tables hold anything other than the demo records. Development only. |
 
    Every table has row-level security on with no policies, so only the service-role key (used by the backend) can access it.
 

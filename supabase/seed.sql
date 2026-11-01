@@ -5,8 +5,13 @@
 -- should against the policy windows (7 days to report damage, 30-day returns, 1-hour
 -- cancellation, ...). The smoke test calls it over RPC before checking the tools.
 --
--- WARNING: reset_demo_data() deletes ALL customers and orders. Development only;
--- never create this function in a database with real customer data.
+-- WARNING: reset_demo_data() deletes all customers and orders. Development only.
+-- As a guard, it refuses to run if any customer or order isn't one of the demo
+-- records below, so it can't wipe real data.
+--
+-- The truncate deliberately has no CASCADE: if a later table references these
+-- (tickets, refunds, ...), the reset fails instead of silently emptying it.
+-- Add such tables to the truncate list explicitly.
 
 create or replace function public.reset_demo_data()
 returns void
@@ -15,7 +20,12 @@ security definer
 set search_path = public
 as $$
 begin
-  truncate public.order_items, public.orders, public.customers restart identity cascade;
+  if exists (select 1 from public.customers where id not in ('cus_001', 'cus_002', 'cus_003', 'cus_004', 'cus_005'))
+     or exists (select 1 from public.orders where order_number not between 1042 and 1049) then
+    raise exception 'reset_demo_data refused: the database has customers or orders that are not demo data';
+  end if;
+
+  truncate public.order_items, public.orders, public.customers restart identity;
 
   insert into public.customers (id, name, email, phone, city, region, country, reward_points, created_at) values
     ('cus_001', 'Maya Chen',       'maya.chen@example.com',     '206-555-0117', 'Seattle',  'WA', 'US',  460, now() - interval '400 days'),

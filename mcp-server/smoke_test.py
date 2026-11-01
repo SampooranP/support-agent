@@ -1,7 +1,8 @@
 """Launch the MCP server over stdio and check each tool against the seed data.
 
 Reloads the demo data first (supabase/seed.sql's reset_demo_data()), so the
-date-based checks hold no matter when the seed was last run.
+date-based checks hold no matter when the seed was last run. The reset refuses
+to run if the database holds any customers or orders that aren't demo data.
 
 Usage (from the repo root, after running supabase/seed.sql once):
     python mcp-server/smoke_test.py
@@ -9,23 +10,22 @@ Usage (from the repo root, after running supabase/seed.sql once):
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
 from mcp import Client, StdioServerParameters
-from supabase import create_client
+from postgrest.exceptions import APIError
+
+from db import supabase_client
 
 SERVER = Path(__file__).resolve().parent / "server.py"
-load_dotenv(SERVER.parent.parent / ".env")
 
 
 def reset_demo_data() -> None:
-    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        raise SystemExit("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env")
-    create_client(url, key).rpc("reset_demo_data").execute()
+    try:
+        supabase_client().rpc("reset_demo_data").execute()
+    except APIError as e:
+        raise SystemExit(f"Demo data reset refused: {e.message}")
     print("demo data reset")
 
 
@@ -40,12 +40,15 @@ async def main() -> None:
 
         async def check(name: str, args: dict, expect_error: bool, test) -> None:
             nonlocal failures
-            result = await client.call_tool(name, args)
-            text = result.content[0].text if result.content else ""
-            data = result.structured_content or {}
-            ok = result.is_error == expect_error and test(data, text)
+            try:
+                result = await client.call_tool(name, args)
+                text = getattr(result.content[0], "text", "") if result.content else ""
+                data = result.structured_content or {}
+                ok = result.is_error == expect_error and test(data, text)
+                summary = text if result.is_error else json.dumps(data)[:120]
+            except Exception as e:  # a malformed response is a failed check, not a crashed run
+                ok, summary = False, f"{type(e).__name__}: {e}"
             failures += not ok
-            summary = text if result.is_error else json.dumps(data)[:120]
             print(f"{'PASS' if ok else 'FAIL'}  {name}({args}) -> {summary}")
 
         await check("get_order", {"order_number": "#1042"}, False,
@@ -62,7 +65,10 @@ async def main() -> None:
                     lambda d, _: d["id"] == "cus_003" and [o["order_number"] for o in d["recent_orders"]] == [1045])
         await check("get_customer", {"customer_id": "cus_004"}, False,
                     lambda d, _: [o["order_number"] for o in d["recent_orders"]] == [1046, 1049])
+        await check("get_customer", {"email": " ", "customer_id": "cus_001"}, False,
+                    lambda d, _: d["name"] == "Maya Chen")
         await check("get_customer", {"email": "nobody@example.com"}, True, lambda _, t: "No customer" in t)
+        await check("get_customer", {"email": "   "}, True, lambda _, t: "exactly one" in t)
         await check("get_customer", {}, True, lambda _, t: "exactly one" in t)
 
     print(f"\n{'All checks passed.' if not failures else f'{failures} check(s) failed.'}")

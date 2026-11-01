@@ -9,20 +9,16 @@ Run over stdio (how MCP clients such as Claude Desktop launch it):
 """
 
 import logging
-import os
 import re
 from datetime import datetime, timezone
-from functools import cache
-from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from supabase import Client, create_client
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+from db import supabase_client as db
+
 logging.getLogger("httpx").setLevel(logging.WARNING)  # don't log every Supabase request URL
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -36,14 +32,6 @@ mcp = MCPServer(
         "Times are UTC; money amounts are in the order's currency."
     ),
 )
-
-
-@cache
-def db() -> Client:
-    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env")
-    return create_client(url, key)
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -87,14 +75,16 @@ def get_customer(email: str | None = None, customer_id: str | None = None) -> di
     newest first, with each order's number, status, total, currency and dates.
     Use get_order for an order's line items and tracking details.
     """
+    email = (email or "").strip().lower() or None
+    customer_id = (customer_id or "").strip() or None
     if bool(email) == bool(customer_id):
         raise ToolError("Give exactly one of email or customer_id.")
 
     query = db().table("customers").select("*, orders(order_number, status, total, currency, placed_at, delivered_at)")
     if email:
-        query = query.eq("email", email.strip().lower())
+        query = query.eq("email", email)
     else:
-        query = query.eq("id", customer_id.strip())
+        query = query.eq("id", customer_id)
     query = query.order("placed_at", desc=True, foreign_table="orders").limit(RECENT_ORDERS_LIMIT, foreign_table="orders")
     rows = query.execute().data
     if not rows:
