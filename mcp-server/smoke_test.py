@@ -37,6 +37,9 @@ async def main() -> None:
     async with Client(params) as client:
         tools = sorted(t.name for t in (await client.list_tools()).tools)
         print(f"tools: {tools}")
+        if tools != ["create_ticket", "get_customer", "get_order", "issue_refund", "send_email"]:
+            failures += 1
+            print("FAIL  unexpected tool list")
 
         async def check(name: str, args: dict, expect_error: bool, test) -> None:
             nonlocal failures
@@ -70,6 +73,20 @@ async def main() -> None:
         await check("get_customer", {"email": "nobody@example.com"}, True, lambda _, t: "No customer" in t)
         await check("get_customer", {"email": "   "}, True, lambda _, t: "exactly one" in t)
         await check("get_customer", {}, True, lambda _, t: "exactly one" in t)
+        await check("create_ticket", {"subject": "Lost package", "description": "Order #1048 never arrived.",
+                                      "priority": "high", "order_number": "1048",
+                                      "customer_email": "leo.martins@example.com"}, False,
+                    lambda d, _: d["ticket_number"] >= 5001 and d["customer_id"] == "cus_005" and d["status"] == "open")
+        await check("create_ticket", {"subject": "x", "description": "y", "order_number": "9999"}, True,
+                    lambda _, t: "No order #9999" in t)
+        # Refunds and emails must be refused without a real, approved approval.
+        fake = "00000000-0000-0000-0000-000000000000"
+        await check("issue_refund", {"order_number": "1042", "amount": 10, "reason": "test", "approval_id": fake}, True,
+                    lambda _, t: "No refund approval" in t)
+        await check("issue_refund", {"order_number": "1042", "amount": 10, "reason": "test", "approval_id": "not-a-uuid"},
+                    True, lambda _, t: "uuid" in t.lower())
+        await check("send_email", {"to": "maya.chen@example.com", "subject": "Hi", "body": "Test", "approval_id": fake},
+                    True, lambda _, t: "No email approval" in t)
 
     print(f"\n{'All checks passed.' if not failures else f'{failures} check(s) failed.'}")
     sys.exit(1 if failures else 0)

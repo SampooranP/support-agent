@@ -1,0 +1,242 @@
+"""The agent loop, with human approval for risky tools.
+
+A turn streams Claude's reply and runs tools until Claude is done. When Claude calls
+a risky tool, the loop records an approval request, holds the turn's other tool
+results in conversation.pending_turn, and stops with status "awaiting_approval".
+When every approval in the turn is decided, resume_after_decisions() runs the
+approved tools, sends all the results back to Claude, and continues the loop.
+
+The full message history is stored in Supabase, so a paused conversation survives
+restarts and can be resumed by a later request.
+"""
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+import anthropic
+import anyio
+
+from agent import store
+from agent.prompts import system_prompt
+from agent.tools import RISKY_TOOLS, STATUS_LABELS, ApprovalNeeded, Toolbox, ToolResult
+
+MODEL = "claude-opus-5-5"
+MAX_TOOL_ROUNDS = 12  # per turn, as a backstop against loops
+Emit = Callable[[dict], Awaitable[None]]
+
+
+async def _ignore(_: dict) -> None:
+    pass
+
+
+class Agent:
+    def __init__(self, client: anthropic.AsyncAnthropic, toolbox: Toolbox):
+        self.client = client
+        self.toolbox = toolbox
+
+    async def handle_user_message(self, conversation: dict, text: str, emit: Emit = _ignore) -> None:
+        conversation["messages"].append({"role": "user", "content": text})
+        await self._run(conversation, emit)
+
+    async def resume_after_decisions(self, conversation: dict, emit: Emit = _ignore) -> bool:
+        """If every approval in the paused turn is decided, finish the turn. Returns True if it resumed."""
+        pending = conversation["pending_turn"]
+        approvals = {a["tool_use_id"]: a for a in await _thread(store.list_approvals, None, conversation["id"])}
+        if any(approvals[i]["status"] == "pending" for i in pending["awaiting"]):
+            return False
+
+        results = pending["results"]
+        for tool_use_id in pending["awaiting"]:
+            approval = approvals[tool_use_id]
+            if approval["status"] == "approved":
+                await emit({"type": "tool", "name": approval["tool_name"], "status": "running",
+                            "label": STATUS_LABELS[approval["tool_name"]]})
+                result = await self.toolbox.run(approval["tool_name"], _model_input(approval), conversation,
+                                                approval_id=approval["id"])
+                # Say what happened in words: to Claude, the call just returned, with no sign a human was involved.
+                if result.is_error:
+                    await _thread(store.mark_approval_failed, approval["id"], str(result.content))
+                    result = ToolResult(f"A support supervisor approved this, but it failed: {result.content}",
+                                        is_error=True)
+                else:
+                    done = "The refund has been issued" if approval["tool_name"] == "issue_refund" else "The email has been sent"
+                    result = ToolResult(f"A support supervisor approved this request and it is complete. {done}. "
+                                        f"Record: {result.content}")
+                await emit({"type": "tool", "name": approval["tool_name"],
+                            "status": "error" if result.is_error else "done"})
+            else:
+                note = f" Reviewer's note: {approval['reviewer_note']}" if approval["reviewer_note"] else ""
+                result = ToolResult(f"A support supervisor rejected this action, so it was not carried out.{note}",
+                                    is_error=True)
+            results[tool_use_id] = result.as_block(tool_use_id)
+
+        conversation["messages"].append({"role": "user", "content": [results[i] for i in pending["order"]]})
+        conversation["pending_turn"] = None
+        conversation["status"] = "active"
+        await self._run(conversation, emit)
+        return True
+
+    async def _run(self, conversation: dict, emit: Emit) -> None:
+        customer = await _thread(store.get_customer_by_email, conversation["customer_email"])
+        system = system_prompt(customer["name"], customer["email"])
+        messages = conversation["messages"]
+
+        try:
+            for _ in range(MAX_TOOL_ROUNDS):
+                response = await self._stream(system, messages, emit)
+                content, tool_uses = _history_content(response.content)
+
+                if response.stop_reason == "refusal" or (response.stop_reason == "max_tokens" and tool_uses):
+                    # Don't run tools from a declined or cut-off reply, and keep no unanswered tool_use in
+                    # history (the next request would be rejected). Keep any text so the history stays valid.
+                    kept = [b for b in content if b["type"] != "tool_use"]
+                    messages.append({"role": "assistant", "content": kept or "Sorry, I can't help with that."})
+                    await emit({"type": "error", "message": "The request was declined." if response.stop_reason
+                                == "refusal" else "The reply was too long and got cut off."})
+                    break
+                messages.append({"role": "assistant", "content": content})
+                if not tool_uses:
+                    break
+
+                results, awaiting = await self._run_tools(conversation, tool_uses, emit)
+                if awaiting:
+                    conversation["pending_turn"] = {
+                        "order": [t.id for t in tool_uses],
+                        "results": results,
+                        "awaiting": awaiting,
+                    }
+                    conversation["status"] = "awaiting_approval"
+                    break
+                messages.append({"role": "user", "content": [results[t.id] for t in tool_uses]})
+            else:
+                await emit({"type": "error", "message": "Stopped after too many tool calls."})
+        finally:
+            await _thread(store.save_conversation, conversation)
+            await emit({"type": "done", "status": conversation["status"]})
+
+    async def _stream(self, system: str, messages: list[dict], emit: Emit):
+        await emit({"type": "status", "text": "Thinking"})
+        for attempt in range(3):
+            try:
+                async with self.client.beta.messages.stream(
+                    model=MODEL,
+                    max_tokens=64000,
+                    system=system,
+                    tools=self.toolbox.claude_tools(),
+                    messages=messages,
+                    output_config={"effort": "medium"},
+                    cache_control={"type": "ephemeral"},
+                    # If a safety classifier declines, retry server-side on Anthropic's recommended fallback model.
+                    betas=["server-side-fallback-2026-07-01"],
+                    fallbacks="default",
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "text":
+                            await emit({"type": "text", "delta": event.text})
+                    return await stream.get_final_message()
+            except ValueError:
+                # Tool input JSON the SDK couldn't parse at all (possible with eager input streaming).
+                # Nothing was appended to history, so re-issue the turn.
+                if attempt == 2:
+                    raise
+
+    async def _run_tools(self, conversation: dict, tool_uses: list, emit: Emit) -> tuple[dict, list[str]]:
+        results: dict[str, Any] = {}
+        awaiting: list[str] = []
+        for tool_use in tool_uses:
+            error = self.toolbox.validate(tool_use.name, tool_use.input)
+            if error:
+                results[tool_use.id] = ToolResult(error, is_error=True).as_block(tool_use.id)
+                continue
+
+            label = STATUS_LABELS.get(tool_use.name, tool_use.name)
+            if tool_use.name == "get_order":
+                label += f" #{str(tool_use.input['order_number']).lstrip('#')}"
+            await emit({"type": "tool", "name": tool_use.name, "status": "running", "label": label})
+
+            if tool_use.name in RISKY_TOOLS:
+                check = await self.toolbox.check_risky(tool_use.name, tool_use.input, conversation)
+                if isinstance(check, ApprovalNeeded):
+                    approval = await _thread(store.create_approval, conversation["id"], tool_use.id,
+                                             check.tool_name, check.tool_input, check.summary)
+                    awaiting.append(tool_use.id)
+                    results[tool_use.id] = None  # filled in after the decision
+                    await emit({"type": "approval", "id": approval["id"], "tool_name": check.tool_name,
+                                "summary": check.summary})
+                    continue
+                result = check
+            else:
+                result = await self.toolbox.run(tool_use.name, tool_use.input, conversation)
+
+            results[tool_use.id] = result.as_block(tool_use.id)
+            await emit({"type": "tool", "name": tool_use.name, "status": "error" if result.is_error else "done"})
+        return results, awaiting
+
+
+def _history_content(blocks) -> tuple[list[dict], list]:
+    """Turn response blocks into history content, and pick out the tool calls to run.
+
+    After a mid-answer fallback to another model, thinking and tool_use blocks before the
+    last fallback block belong to the declined attempt: they're left out of history and
+    never run.
+    """
+    boundary = max((i for i, b in enumerate(blocks) if b.type == "fallback"), default=-1)
+    content, tool_uses = [], []
+    for i, block in enumerate(blocks):
+        if i < boundary and block.type in ("thinking", "redacted_thinking", "tool_use"):
+            continue
+        content.append(block.model_dump(mode="json", exclude_none=True))
+        if block.type == "tool_use":
+            tool_uses.append(block)
+    return content, tool_uses
+
+
+def _model_input(approval: dict) -> dict:
+    """The approved input, as Claude's tool schema shapes it (the agent adds hidden fields itself)."""
+    tool_input = dict(approval["tool_input"])
+    if approval["tool_name"] == "send_email":
+        tool_input.pop("to", None)
+    return tool_input
+
+
+async def _thread(fn, *args):
+    return await anyio.to_thread.run_sync(lambda: fn(*args))
+
+
+def transcript(conversation: dict, approvals: list[dict]) -> list[dict]:
+    """The conversation as the chat UI shows it: user and assistant messages, tool steps, and sources."""
+    by_tool_use = {a["tool_use_id"]: a for a in approvals}
+    items: list[dict] = []
+    for message in conversation["messages"]:
+        if message["role"] == "user":
+            if isinstance(message["content"], str):
+                items.append({"role": "user", "text": message["content"]})
+            continue
+        content = message["content"]
+        if isinstance(content, str):
+            items.append({"role": "assistant", "text": content, "sources": []})
+            continue
+        text, sources = "", []
+
+        def flush():
+            nonlocal text, sources
+            if text.strip():
+                items.append({"role": "assistant", "text": text.strip(), "sources": sources})
+            text, sources = "", []
+
+        for block in content:
+            if block["type"] == "text":
+                text += block["text"]
+                for citation in block.get("citations", []):
+                    label = citation.get("title") or citation.get("source")
+                    if label and label not in sources:
+                        sources.append(label)
+            elif block["type"] == "tool_use":
+                flush()  # text before a tool call is shown before the tool step
+                step = {"role": "tool", "name": block["name"], "label": STATUS_LABELS.get(block["name"], block["name"])}
+                if block["id"] in by_tool_use:
+                    a = by_tool_use[block["id"]]
+                    step["approval"] = {"id": a["id"], "status": a["status"], "summary": a["summary"]}
+                items.append(step)
+        flush()
+    return items

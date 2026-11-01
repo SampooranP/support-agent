@@ -9,9 +9,10 @@
 -- As a guard, it refuses to run if any customer or order isn't one of the demo
 -- records below, so it can't wipe real data.
 --
--- The truncate deliberately has no CASCADE: if a later table references these
--- (tickets, refunds, ...), the reset fails instead of silently emptying it.
--- Add such tables to the truncate list explicitly.
+-- It also clears conversations, approvals, tickets, refunds and emails, so every test
+-- or eval run starts clean. The truncate deliberately has no CASCADE: if a new table
+-- references these, the reset fails instead of silently emptying it. Add such tables
+-- to the truncate list explicitly.
 
 create or replace function public.reset_demo_data()
 returns void
@@ -25,7 +26,9 @@ begin
     raise exception 'reset_demo_data refused: the database has customers or orders that are not demo data';
   end if;
 
-  truncate public.order_items, public.orders, public.customers restart identity;
+  truncate public.emails, public.refunds, public.tickets, public.approval_requests, public.conversations,
+           public.order_items, public.orders, public.customers
+    restart identity;
 
   insert into public.customers (id, name, email, phone, city, region, country, reward_points, created_at) values
     ('cus_001', 'Maya Chen',       'maya.chen@example.com',     '206-555-0117', 'Seattle',  'WA', 'US',  460, now() - interval '400 days'),

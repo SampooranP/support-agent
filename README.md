@@ -68,6 +68,7 @@ Requires Python 3.11+ and a [Supabase](https://supabase.com) project, plus API k
    | [`supabase/migrations/20261101000000_doc_chunks.sql`](supabase/migrations/20261101000000_doc_chunks.sql) | Enables pgvector; creates the `doc_chunks` table (HNSW index) and the `match_doc_chunks` similarity-search function |
    | [`supabase/migrations/20261102000000_customers_orders.sql`](supabase/migrations/20261102000000_customers_orders.sql) | Creates the `customers`, `orders` and `order_items` tables |
    | [`supabase/migrations/20261103000000_doc_chunks_rpcs.sql`](supabase/migrations/20261103000000_doc_chunks_rpcs.sql) | Adds `replace_doc_chunks` (re-ingests a document in one transaction) and `doc_chunk_sources` |
+   | [`supabase/migrations/20261104000000_support_actions.sql`](supabase/migrations/20261104000000_support_actions.sql) | Creates `conversations`, `approval_requests`, `tickets`, `refunds` and `emails`, plus `execute_refund` / `execute_email`, the only way a refund or email is written (each re-checks that a human approved those exact arguments) |
    | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. The function wipes and reloads those tables, which keeps the order dates fresh; the smoke test calls it before each run. It refuses to run if the tables hold anything other than the demo records. Development only. |
 
    Every table has row-level security on with no policies, so only the service-role key (used by the backend) can access it.
@@ -119,8 +120,11 @@ Questions the docs don't cover (e.g. "What's your CEO's name?") get an "I don't 
 |---|---|---|
 | `get_order` | order number (`1042` or `#1042`) | status, shipping, tracking, amounts, dates, line items (with Final Sale flag), customer, plus `hours_since_placed` and `days_since_delivery` |
 | `get_customer` | `email` or `customer_id` | profile, Trail Rewards points, and up to 20 recent orders |
+| `create_ticket` | subject, description, priority, optional order and customer | the new ticket (numbered from 5001) |
+| `issue_refund` | order number, amount, reason, `approval_id` | the refund record. **Needs a human approval** |
+| `send_email` | recipient, subject, body, `approval_id` | the email record (recorded, not actually sent). **Needs a human approval** |
 
-Both are read-only. Unknown orders or customers return an error message the model can act on (for example, "No order #9999 found").
+Errors come back as messages the model can act on (for example, "No order #9999 found"). `issue_refund` and `send_email` only work with the ID of an approval a person approved for exactly those arguments; the database enforces this, so even a buggy agent can't refund without a human.
 
 ```bash
 python mcp-server/smoke_test.py   # reloads the demo data, launches the server over stdio, checks each tool
@@ -132,6 +136,23 @@ To try the tools from Claude Code, register the server with absolute paths, so i
 ```bash
 claude mcp add lumen-pine-support -- /path/to/support-agent/.venv/bin/python /path/to/support-agent/mcp-server/server.py
 ```
+
+### Agent API (with human approval)
+
+[`agent/api.py`](agent/api.py) is the agent behind the chat UI. It streams Claude's replies, searches the knowledge base (with citations) and calls the MCP tools, which it launches itself.
+
+When Claude asks to refund or send an email, the agent doesn't run the tool. It records an approval request and pauses the conversation. Once a supervisor approves or rejects it, the agent runs the approved action (or not), tells Claude the outcome, and the conversation continues. Paused conversations are stored in Supabase, so they survive restarts.
+
+Guardrails in [`agent/tools.py`](agent/tools.py): customers can only see their own orders, emails only go to the signed-in customer, refunds can't exceed the order total, and the model never sees or supplies identity or approval IDs.
+
+```bash
+uvicorn agent.api:app --port 8000      # start the API (http://localhost:8000/docs for the endpoint list)
+python -m agent.scenario_test          # in another terminal: end-to-end scenarios with real Claude calls
+```
+
+The scenarios reset the demo data, then check that a damaged-item refund pauses for approval, that a rejection is reported and nothing is refunded, that an approval creates exactly one refund, that another customer's order isn't revealed, and that a Final Sale item gets no refund.
+
+> **No authentication yet:** the demo signs in by picking a customer, and the approval endpoints are open. Fine on localhost; authentication comes before deployment.
 
 ## Roadmap
 
