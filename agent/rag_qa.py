@@ -110,7 +110,13 @@ def main() -> None:
     if args.question:
         print(answer_question(client, args.question, args.top_k, args.show_chunks))
         return
-    while question := input("\nQuestion (blank to quit): ").strip():
+    while True:
+        try:
+            question = input("\nQuestion (blank to quit): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not question:
+            break
         print()
         print(answer_question(client, question, args.top_k, args.show_chunks))
 

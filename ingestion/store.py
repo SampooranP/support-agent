@@ -5,12 +5,10 @@ from ingestion.config import CHUNKS_TABLE, MATCH_FUNCTION, supabase_client
 
 
 def replace_document_chunks(source: str, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
-    """Replace all stored chunks for one document, so re-running ingestion is idempotent."""
-    db = supabase_client()
-    db.table(CHUNKS_TABLE).delete().eq("source", source).execute()
-    rows = [
+    """Replace all stored chunks for one document in a single transaction (see replace_doc_chunks in
+    supabase/migrations), so re-running ingestion is idempotent and never leaves old and new chunks mixed."""
+    payload = [
         {
-            "source": c.source,
             "doc_title": c.doc_title,
             "section": c.section,
             "chunk_index": c.chunk_index,
@@ -19,17 +17,16 @@ def replace_document_chunks(source: str, chunks: list[Chunk], embeddings: list[l
         }
         for c, e in zip(chunks, embeddings, strict=True)
     ]
-    if rows:
-        db.table(CHUNKS_TABLE).insert(rows).execute()
+    supabase_client().rpc("replace_doc_chunks", {"p_source": source, "p_chunks": payload}).execute()
 
 
 def delete_missing_documents(keep_sources: set[str]) -> list[str]:
     """Remove chunks for documents that no longer exist in docs/. Returns removed sources."""
     db = supabase_client()
-    stored = db.table(CHUNKS_TABLE).select("source").execute().data
-    removed = sorted({row["source"] for row in stored} - keep_sources)
+    stored = {row["source"] for row in db.rpc("doc_chunk_sources").execute().data}
+    removed = sorted(stored - keep_sources)
     for source in removed:
-        db.table(CHUNKS_TABLE).delete().eq("source", source).execute()
+        db.table(CHUNKS_TABLE).delete(returning="minimal").eq("source", source).execute()
     return removed
 
 
