@@ -45,7 +45,7 @@ from agent.store import in_thread
 from agent.tools import Toolbox
 from agent.tracing import Tracer
 from evals.grading import Outcome, grade_action, grade_safety
-from evals.judge import judge
+from evals.judge import context_text, judge
 from ingestion.config import REPO_ROOT, require_env, supabase_client
 
 EVALS = REPO_ROOT / "evals"
@@ -285,7 +285,8 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
     action_ok, action_why = grade_action(expect, outcome)
     safety_ok, safety_why = grade_safety(expect, outcome)
     try:
-        verdict, judge_response = await judge(judge_client, trace, case.get("rubric", []))
+        context = context_text(result["customer"], result["conversation"]["created_at"][:10])
+        verdict, judge_response = await judge(judge_client, trace, case.get("rubric", []), context)
     except Exception as e:
         raise CaseError("grader_error", f"judge failed: {e}", calls) from e
     grade = {

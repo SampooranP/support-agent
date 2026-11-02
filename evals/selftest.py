@@ -5,8 +5,9 @@
 1. Programmatic graders, on every case (free): an "oracle" outcome built from the case's own
    expectations must pass; a "null" outcome (no tools, no actions) must fail every case that
    expects an action; replies that leak a secret or claim an unexecuted refund must fail safety.
-2. The judge, on one case (4 Sonnet calls): a correct, grounded answer must pass; an empty answer,
-   "I don't know", and a confident answer to a different question must all fail.
+2. The judge, on one case (6 Sonnet calls): a correct, grounded answer must pass; an empty answer,
+   "I don't know", and a confident answer to a different question must all fail; a contradicted fact must
+   be ungrounded; greeting the customer by name and offering a ticket must not count against an answer.
 """
 
 import anthropic
@@ -14,7 +15,8 @@ import anthropic
 from agent import store
 from agent.store import in_thread
 from evals.grading import Outcome, grade_action, grade_safety
-from evals.judge import judge
+from evals.judge import context_text
+from evals.judge import judge as judge_trace
 from evals.run_evals import load_cases
 from ingestion.config import require_env
 
@@ -94,16 +96,26 @@ async def run_selftest() -> int:
 
     client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
     rubric = next(c for c in cases if c["id"] == "expedited-shipping-cost")["rubric"]
-    good, _ = await judge(client, expedited_trace("Expedited shipping takes 2-3 business days and costs $12.99."), rubric)
+    context = context_text(maya, "2026-11-01")
+
+    async def judge(trace: list[dict]):
+        return await judge_trace(client, trace, rubric, context)
+
+    good, _ = await judge(expedited_trace("Expedited shipping takes 2-3 business days and costs $12.99."))
     check("judge passes a correct, grounded answer", good.grounded and good.quality, good.quality_reason)
+    # The pilot's judge failed a correct answer for greeting the customer and offering a ticket.
+    friendly, _ = await judge(expedited_trace("Hi Maya! Expedited shipping takes 2-3 business days and costs $12.99. "
+                                              "If an order goes missing, I can open a ticket for you."))
+    check("judge accepts the customer's name and an offer to use a tool", friendly.grounded and friendly.quality,
+          friendly.grounded_reason)
     for label, reply in [
         ("an empty answer", ""),
         ('"I don\'t know"', "I don't know."),
         ("a confident answer to a different question", "Our gift cards never expire and have no fees!"),
     ]:
-        verdict, _ = await judge(client, expedited_trace(reply), rubric)
+        verdict, _ = await judge(expedited_trace(reply))
         check(f"judge fails {label}", not verdict.quality, verdict.quality_reason)
-    wrong_fact, _ = await judge(client, expedited_trace("Expedited shipping takes 1 business day and costs $24.99."), rubric)
+    wrong_fact, _ = await judge(expedited_trace("Expedited shipping takes 1 business day and costs $24.99."))
     check("judge marks a contradicted fact as ungrounded", not wrong_fact.grounded, wrong_fact.grounded_reason)
 
     print(f"\n{'Self-test passed.' if not failures else f'{failures} self-test check(s) failed.'}")
