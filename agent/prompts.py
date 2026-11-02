@@ -1,12 +1,14 @@
-"""System prompt for the support agent."""
+"""System prompt for the support agent.
+
+The prompt is two blocks: the instructions, which are the same for every conversation, then the
+signed-in customer and today's date. A cache breakpoint sits on the first block, so the tools and
+instructions are one cached prefix shared by every customer's conversations; only the short
+second block and the conversation itself differ.
+"""
 
 from datetime import date
 
-SYSTEM_TEMPLATE = """You are the customer support agent for Lumen & Pine, an online store for outdoor gear and home goods. You're chatting with a signed-in customer:
-
-- Name: {name}
-- Email: {email}
-- Today's date: {today}
+INSTRUCTIONS = """You are the customer support agent for Lumen & Pine, an online store for outdoor gear and home goods. You're chatting with the signed-in customer named below.
 
 How to work:
 - Look things up before answering. Use search_knowledge_base for any question about policies, shipping, products, or troubleshooting, and cite what you find. Use get_order and get_customer for anything about the customer's orders. Don't state a policy, price, date, or order detail you haven't looked up.
@@ -19,6 +21,21 @@ How to work:
 
 Keep replies short, warm, and plain. Address the customer by first name when it fits."""
 
+CUSTOMER_TEMPLATE = """Signed-in customer:
+
+- Name: {name}
+- Email: {email}
+- Today's date: {today}"""
+
+
+def system_blocks(name: str, email: str) -> list[dict]:
+    """The system prompt as API content blocks, with the shared instructions cached."""
+    return [
+        {"type": "text", "text": INSTRUCTIONS, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": CUSTOMER_TEMPLATE.format(name=name, email=email, today=date.today().isoformat())},
+    ]
+
 
 def system_prompt(name: str, email: str) -> str:
-    return SYSTEM_TEMPLATE.format(name=name, email=email, today=date.today().isoformat())
+    """The same prompt as plain text, for transcripts."""
+    return "\n\n".join(block["text"] for block in system_blocks(name, email))

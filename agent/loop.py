@@ -20,7 +20,7 @@ import anthropic
 
 from agent import guardrails, store
 from agent.pricing import usage_dict
-from agent.prompts import system_prompt
+from agent.prompts import system_blocks
 from agent.store import in_thread
 from agent.tools import RISKY_TOOLS, STATUS_LABELS, ApprovalNeeded, Toolbox, ToolResult
 from agent.tracing import Tracer
@@ -109,7 +109,7 @@ class Agent:
         messages = conversation["messages"]
         try:
             customer = await in_thread(store.get_customer_by_email, conversation["customer_email"])
-            system = system_prompt(customer["name"], customer["email"])
+            system = system_blocks(customer["name"], customer["email"])
             for _ in range(MAX_TOOL_ROUNDS):
                 response = await self._stream(system, messages, emit)
                 content, tool_uses = _history_content(response.content)
@@ -147,7 +147,7 @@ class Agent:
             await in_thread(store.save_conversation, conversation)
             await emit({"type": "done", "status": conversation["status"]})
 
-    async def _stream(self, system: str, messages: list[dict], emit: Emit):
+    async def _stream(self, system: list[dict], messages: list[dict], emit: Emit):
         await emit({"type": "status", "text": "Thinking"})
         for attempt in range(3):
             try:
