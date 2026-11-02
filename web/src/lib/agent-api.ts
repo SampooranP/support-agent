@@ -2,10 +2,14 @@ import "server-only";
 
 // The Python agent API. Only the Next.js server talks to it; the browser calls /api/* here.
 const AGENT_API_URL = process.env.AGENT_API_URL ?? "http://localhost:8000";
+// Shared secret the agent API checks on every call (unset locally, set in deployment).
+const AGENT_API_SECRET = process.env.AGENT_API_SECRET;
 
 export async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
   try {
-    return await fetch(`${AGENT_API_URL}${path}`, { ...init, cache: "no-store" });
+    const headers = new Headers(init?.headers);
+    if (AGENT_API_SECRET) headers.set("x-agent-secret", AGENT_API_SECRET);
+    return await fetch(`${AGENT_API_URL}${path}`, { ...init, headers, cache: "no-store" });
   } catch {
     return Response.json(
       { detail: `Can't reach the agent API at ${AGENT_API_URL}. Is it running? (uvicorn agent.api:app --port 8000)` },

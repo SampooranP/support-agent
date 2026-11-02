@@ -3,7 +3,11 @@
 Run from the repo root:
     uvicorn agent.api:app --reload --port 8000
 
+Every endpoint except /health needs the X-Agent-Secret header when AGENT_API_SECRET is set (it always
+is in deployment). Only the Next.js server calls this API, so there's no CORS: browsers can't call it.
+
 Endpoints:
+    GET  /health                         liveness check for the load balancer (no secret needed)
     GET  /customers                      demo customers to sign in as
     POST /conversations                  start a conversation for a customer
     GET  /conversations/{id}             transcript, status, specialist and approvals
@@ -26,8 +30,10 @@ Stream events (one JSON object per `data:` line):
 """
 
 import asyncio
+import hmac
 import json
 import logging
+import os
 import sys
 import time
 import weakref
@@ -35,13 +41,12 @@ from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 
 import anthropic
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from mcp import Client, StdioServerParameters
 from pydantic import BaseModel, Field
 
-from agent import store
+from agent import spend, store
 from agent.guardrails import RateLimiter
 from agent.loop import Agent, transcript
 from agent.store import in_thread
@@ -54,6 +59,7 @@ log = logging.getLogger("agent")
 
 MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
 RESUME_RETRY_SECONDS = 15  # after a failed resume, wait this long before trying again
+API_SECRET = os.getenv("AGENT_API_SECRET", "")
 
 # Guardrail: cap how fast one conversation, or one customer across conversations, can send messages.
 per_conversation_limit = RateLimiter(limit=10, window_s=300)
@@ -107,7 +113,7 @@ def schedule_resume(conversation_id: str) -> None:
                     if not conversation or conversation["status"] != "awaiting_approval":
                         continue
                     try:
-                        await app.state.agent.resume_after_decisions(conversation)
+                        await app.state.agent.resume_after_decisions(conversation, spend.metered(_discard))
                         _resume_failed_at.pop(conversation_id, None)
                     except Exception:
                         log.exception("resume after approval failed; will retry")
@@ -118,6 +124,10 @@ def schedule_resume(conversation_id: str) -> None:
             _resume_requested.discard(conversation_id)
 
     spawn(worker())
+
+
+async def _discard(_: dict) -> None:
+    pass
 
 
 def all_decided(conversation: dict, approvals: list[dict]) -> bool:
@@ -132,6 +142,8 @@ def all_decided(conversation: dict, approvals: list[dict]) -> bool:
 async def lifespan(app: FastAPI):
     client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"))
     tracer = Tracer()
+    if not API_SECRET:
+        log.warning("AGENT_API_SECRET isn't set: the API accepts requests from anyone who can reach it")
     log.info("Langfuse tracing is %s", "on" if tracer.enabled else "off (no LANGFUSE_* keys)")
     async with Client(StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])) as mcp:
         app.state.agent = Agent(client, await Toolbox.connect(mcp), tracer)
@@ -145,12 +157,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Lumen & Pine support agent", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+
+@app.middleware("http")
+async def require_secret(request: Request, call_next):
+    if API_SECRET and request.url.path != "/health":
+        if not hmac.compare_digest(request.headers.get("x-agent-secret", "").encode(), API_SECRET.encode()):
+            return JSONResponse({"detail": "Missing or wrong X-Agent-Secret header"}, status_code=401)
+    return await call_next(request)
 
 
 class NewConversation(BaseModel):
@@ -172,6 +186,11 @@ async def _conversation_or_404(conversation_id: str) -> dict:
     if not conversation:
         raise HTTPException(404, "Conversation not found")
     return conversation
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 @app.get("/customers")
@@ -213,6 +232,8 @@ async def send_message(conversation_id: str, body: NewMessage):
         raise HTTPException(409, "The agent is still working on the last message")
     if not (per_conversation_limit.allow(conversation_id) and per_customer_limit.allow(conversation["customer_email"])):
         raise HTTPException(429, "You're sending messages too quickly. Please wait a few minutes and try again.")
+    if await spend.over_cap():
+        raise HTTPException(503, "The demo has used up today's budget for AI calls. Please try again tomorrow.")
     await lock.acquire()
     try:
         conversation = await _conversation_or_404(conversation_id)  # re-read now that we hold the lock
@@ -232,7 +253,7 @@ async def send_message(conversation_id: str, body: NewMessage):
 
     async def run():
         try:
-            await app.state.agent.handle_user_message(conversation, body.text, emit)
+            await app.state.agent.handle_user_message(conversation, body.text, spend.metered(emit))
         except Exception:
             # The agent reports its own errors; this only catches failures outside its turn handling.
             log.exception("agent run failed")
