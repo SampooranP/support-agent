@@ -1,0 +1,85 @@
+# The eval suite: real Claude calls against the demo Supabase project, billed to ANTHROPIC_API_KEY.
+# Runs only when asked: "Run workflow" on the Actions tab, or adding the `run-evals` label to a PR
+# (pushes don't re-run it; remove and re-add the label for a fresh run). Scores are posted as a PR
+# comment. Development models (Haiku) unless "official" is ticked on a manual run.
+name: Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: Runs per case
+        default: "1"
+      official:
+        description: Official models (Opus agent, Sonnet judge), about 25x the cost
+        type: boolean
+        default: false
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Every run resets the same demo database, so only one may run at a time.
+concurrency:
+  group: evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-evals'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+      LANGFUSE_TRACING_ENVIRONMENT: ci-evals
+      AGENT_MODEL: ${{ github.event.inputs.official == 'true' && 'claude-opus-5-5' || 'claude-haiku-5-5' }}
+      JUDGE_MODEL: ${{ github.event.inputs.official == 'true' && 'claude-sonnet-5-5' || 'claude-haiku-5-5' }}
+      # Where the runner writes: official models next to the committed baseline, others under dev/.
+      RUNS: ${{ github.event.inputs.official == 'true' && 'evals/runs' || 'evals/runs/dev' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Grader self-test
+        run: python -m evals.run_evals --selftest
+      - name: Run evals
+        env:
+          REPS: ${{ github.event.inputs.reps || '1' }}
+        # Clear the committed results first, or the runner counts every case as done.
+        run: |
+          rm -rf "$RUNS/baseline"
+          python -m evals.run_evals --full --reps "$REPS"
+      - name: Build report
+        if: always()
+        run: node evals/report/build-report-lite.mjs "$RUNS/"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: |
+            ${{ env.RUNS }}/report.html
+            ${{ env.RUNS }}/baseline/
+      - name: Comment scores on the PR
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "$RUNS/baseline/summary.md" ]; then
+            { cat "$RUNS/baseline/summary.md"; echo; echo "Full report: the \`eval-report\` artifact of [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; } > comment.md
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
+          fi

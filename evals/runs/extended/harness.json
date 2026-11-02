@@ -1,0 +1,12 @@
+{
+  "sha": "aac8b58715f336a64c6cc606c09257ef0b812ca02c63b56c8909c8157321a5a9",
+  "files": [
+    "run_evals.py",
+    "grading.py",
+    "judge.py",
+    "selftest.py",
+    "paraphrases.yaml",
+    "grid.yaml",
+    "adversarial.yaml"
+  ]
+}

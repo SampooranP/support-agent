@@ -17,7 +17,7 @@ Run over stdio (how MCP clients such as Claude Desktop launch it):
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -142,7 +142,7 @@ def create_ticket(
         return db().table("tickets").insert(row).execute().data[0]
     except APIError as e:
         if e.code == "23503":  # foreign key violation: the order doesn't exist
-            raise ToolError(f"No order #{row.get('order_number')} found.")
+            raise ToolError(f"No order #{row.get('order_number')} found.") from None
         raise
 
 
@@ -185,7 +185,7 @@ def _call_approved(function: str, params: dict[str, Any]) -> dict[str, Any]:
         return db().rpc(function, params).execute().data
     except APIError as e:
         # The database refuses unapproved, used, or mismatched actions (and invalid IDs).
-        raise ToolError(e.message)
+        raise ToolError(e.message) from None
 
 
 def _parse_order_number(value: str) -> int:
@@ -196,7 +196,7 @@ def _parse_order_number(value: str) -> int:
 
 
 def _age(timestamp: str):
-    return datetime.now(timezone.utc) - datetime.fromisoformat(timestamp)
+    return datetime.now(UTC) - datetime.fromisoformat(timestamp)
 
 
 if __name__ == "__main__":

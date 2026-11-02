@@ -1,0 +1,10 @@
+{
+  "sha": "dcbe8f7c405befe81eb0522d8918def90c86bb7967c0989406a88ac741787ea3",
+  "files": [
+    "run_evals.py",
+    "grading.py",
+    "judge.py",
+    "selftest.py",
+    "cases.yaml"
+  ]
+}

@@ -130,7 +130,7 @@ def _split_long(paragraph: str, max_chars: int) -> list[str]:
     parts: list[list[str]] = []
     current: list[str] = []
     size = 0
-    for line in (piece for line in lines for piece in _wrap(line, budget)):
+    for line in (piece for raw in lines for piece in _wrap(raw, budget)):
         if current and size + 1 + len(line) > budget:
             parts.append(current)
             current, size = [], 0

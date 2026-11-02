@@ -7,7 +7,7 @@
 --
 -- WARNING: reset_demo_data() deletes all customers and orders. Development only.
 -- As a guard, it refuses to run if any customer or order isn't one of the demo
--- records below, so it can't wipe real data.
+-- records below (or the eval grid's, from seed_grid.sql), so it can't wipe real data.
 --
 -- It also clears conversations, approvals, tickets, refunds and emails, so every test
 -- or eval run starts clean. The truncate deliberately has no CASCADE: if a new table
@@ -21,8 +21,11 @@ security definer
 set search_path = public
 as $$
 begin
-  if exists (select 1 from public.customers where id not in ('cus_001', 'cus_002', 'cus_003', 'cus_004', 'cus_005'))
-     or exists (select 1 from public.orders where order_number not between 1042 and 1049) then
+  -- cus_g* and orders 2001-2999 are the eval grid's extra demo data (seed_grid.sql).
+  if exists (select 1 from public.customers
+             where id not in ('cus_001', 'cus_002', 'cus_003', 'cus_004', 'cus_005') and id not like 'cus\_g%')
+     or exists (select 1 from public.orders
+                where order_number not between 1042 and 1049 and order_number not between 2001 and 2999) then
     raise exception 'reset_demo_data refused: the database has customers or orders that are not demo data';
   end if;
 

@@ -12,6 +12,7 @@ type AgentEvent =
   | { type: "approval"; id: string; tool_name: string; summary: string }
   | { type: "sources"; items: string[] }
   | { type: "error"; message: string }
+  | { type: "guardrail"; kind: string; message?: string }
   | { type: "done"; status: ConversationStatus };
 
 /**
@@ -118,6 +119,13 @@ export async function POST(req: Request) {
           case "error":
             endText();
             writer.write({ type: "data-notice", id: `notice-${segment++}`, data: { message: event.message } });
+            break;
+          case "guardrail":
+            // Only guardrails with a customer-facing message are shown; the rest are internal flags.
+            if (event.message) {
+              endText();
+              writer.write({ type: "data-notice", id: `notice-${segment++}`, data: { message: event.message } });
+            }
             break;
           case "done":
             endStep();

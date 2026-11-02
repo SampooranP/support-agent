@@ -25,7 +25,7 @@ def reset_demo_data() -> None:
     try:
         supabase_client().rpc("reset_demo_data").execute()
     except APIError as e:
-        raise SystemExit(f"Demo data reset refused: {e.message}")
+        raise SystemExit(f"Demo data reset refused: {e.message}") from None
     print("demo data reset")
 
 
