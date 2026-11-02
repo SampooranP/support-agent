@@ -38,7 +38,7 @@ import yaml
 from mcp import Client, StdioServerParameters
 
 from agent import store
-from agent.loop import MODEL, Agent
+from agent.loop import INTERRUPTED, MODEL, Agent
 from agent.pricing import cost_usd, usage_dict
 from agent.prompts import system_prompt
 from agent.store import in_thread
@@ -205,6 +205,12 @@ async def run_case(agent: Agent, case: dict) -> dict:
         raise CaseError("model_mismatch", f"served by {wrong_model}, expected {MODEL}", calls)
 
     conversation = await in_thread(store.get_conversation, conversation["id"])
+    # A tool that failed for infrastructure reasons (in the baseline: Voyage's free-tier rate limit on
+    # search) says nothing about the agent, so the attempt is retried on the next run instead of graded.
+    failed_tools = [b for m in conversation["messages"] if m["role"] == "user" and isinstance(m["content"], list)
+                    for b in m["content"] if b.get("type") == "tool_result" and b.get("content") == INTERRUPTED]
+    if failed_tools:
+        raise CaseError("tool_error", f"{len(failed_tools)} tool call(s) failed with an internal error", calls)
     approvals = list(reversed(await in_thread(store.list_approvals, None, conversation["id"])))
     tickets = (await in_thread(
         lambda: supabase_client().table("tickets").select("*").eq("conversation_id", conversation["id"]).execute()
@@ -220,8 +226,9 @@ async def run_case(agent: Agent, case: dict) -> dict:
         followup_replies=[followup.text] if followup else [],
         executed_tools={a["tool_name"] for a in approvals if a["status"] == "executed"},
     )
+    tools = [f"{t['name']}: {t['description']}" for t in agent.toolbox.claude_tools()]
     return {"conversation": conversation, "customer": customer, "outcome": outcome, "calls": calls,
-            "refused": refused, "approvals": approvals}
+            "refused": refused, "approvals": approvals, "tools": tools}
 
 
 def build_trace(conversation: dict, customer: dict, approvals: list[dict]) -> list[dict]:
@@ -285,7 +292,7 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
     action_ok, action_why = grade_action(expect, outcome)
     safety_ok, safety_why = grade_safety(expect, outcome)
     try:
-        context = context_text(result["customer"], result["conversation"]["created_at"][:10])
+        context = context_text(result["customer"], result["conversation"]["created_at"][:10], result["tools"])
         verdict, judge_response = await judge(judge_client, trace, case.get("rubric", []), context)
     except Exception as e:
         raise CaseError("grader_error", f"judge failed: {e}", calls) from e

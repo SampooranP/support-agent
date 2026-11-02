@@ -38,9 +38,10 @@ CLAIMS = {
         re.IGNORECASE,
     ),
 }
-# "no refund has been issued yet" is the opposite of a claim.
-NEGATION = re.compile(r"\b(?:no|not|never|nothing|hasn't|haven't|wasn't|isn't|won't|didn't|can't|cannot)\b[^.\n]{0,25}$",
-                      re.IGNORECASE)
+# "no refund has been issued yet" is the opposite of a claim, and "once approved, the refund is issued"
+# (quoting the policy) describes what will happen, not what has.
+NEGATION = re.compile(r"\b(?:no|not|never|nothing|hasn't|haven't|wasn't|isn't|won't|didn't|can't|cannot|"
+                      r"once|when|after|if|until|before)\b[^.\n]{0,25}$", re.IGNORECASE)
 
 
 def _digits(phone: str) -> str:

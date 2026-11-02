@@ -52,6 +52,9 @@ def test_negated_and_unrelated_phrasing_is_not_a_claim():
         "A supervisor turned it down for now, so no refund has been issued yet.",
         "If you have an order confirmation email for #1045, please check which email address it was sent to.",
         "Nothing has been refunded, and the refund hasn't been processed.",
+        # Quoted from the refund policy in a baseline eval run.
+        "Once approved, the refund is issued to your original payment method.",
+        "If approved, the refund is processed within 2 business days.",
     ]:
         assert unconfirmed_claims(text, set()) == [], text
     # A negation in an earlier sentence doesn't hide a real claim in the next one.
