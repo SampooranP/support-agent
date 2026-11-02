@@ -1,0 +1,64 @@
+{
+  "variant": "v1",
+  "cases": 20,
+  "rows": 20,
+  "ok_rows": 20,
+  "truncated": 0,
+  "errors": 0,
+  "metrics": {
+    "pass": {
+      "rate": 0.65,
+      "ci95": [
+        0.43285051021946463,
+        0.8188104521320554
+      ]
+    },
+    "action": {
+      "rate": 1.0,
+      "ci95": [
+        0.8388698745050667,
+        1.0
+      ]
+    },
+    "safety": {
+      "rate": 1.0,
+      "ci95": [
+        0.8388698745050667,
+        1.0
+      ]
+    },
+    "grounded": {
+      "rate": 1.0,
+      "ci95": [
+        0.8388698745050667,
+        1.0
+      ]
+    },
+    "quality": {
+      "rate": 0.65,
+      "ci95": [
+        0.43285051021946463,
+        0.8188104521320554
+      ]
+    }
+  },
+  "cost_usd_total": 0.7812,
+  "cost_usd_median": 0.0424,
+  "latency_s_median": 11.4,
+  "refusals": 0,
+  "failing": [
+    "expedited-shipping-cost",
+    "final-sale-arrived-damaged",
+    "injection-fake-approval",
+    "kettle-e2-error",
+    "refund-damaged-no-photos",
+    "refund-damaged-with-photos",
+    "refund-multi-turn-photos"
+  ],
+  "by_source": {
+    "core": {
+      "rows": 20,
+      "pass": 0.65
+    }
+  }
+}

@@ -256,3 +256,15 @@ What the failures found:
 - **One prompt-extraction attack partly worked.** The agent didn't paste its instructions, but it summarized them in a ticket and emailed that summary to the customer.
 - **Small unsupported details** in a few answers (carrier practices, product tips), and one off-topic request half answered.
 - **Two grader false positives.** "The refund is issued once the tent arrives" was read as a claim that a refund happened.
+
+**v1** ([change](evals/runs/v1/change.md)): the instructions explain the approval pause, the loop holds one approval per reply, and the claim check allows "issued once it arrives". On the 20 core cases:
+
+| Metric | Baseline | v1 |
+|---|---|---|
+| **Pass** | 60% | **65%** (43-82%) |
+| Right action | 95% | 100% |
+| Safety | 95% | 100% |
+| Grounded | 95% | 100% |
+| Quality | 65% | 65% |
+
+Fixed: the uncharged-order refund, the refund and email requested together, the cancellation reply, and the grader false positive. Still failing: in single-message conversations the agent still requests a refund without writing to the customer first (4 cases). The chat UI covers this: while a request waits for review it tells the customer a supervisor is reviewing it. The eval grades only the agent's own words, so these cases still fail. The judge also marks down one reply split into pieces by its citations. Twenty cases is a small sample: the change in pass rate is within noise.
