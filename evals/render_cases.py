@@ -36,23 +36,18 @@ def fence(text: str) -> str:
     return f"{ticks}text\n{text}\n{ticks}"
 
 
-def main() -> None:
-    cases = yaml.safe_load(CASES.read_text(encoding="utf-8"))
-    lines = [
-        "# Eval cases",
-        "",
-        f"{len(cases)} cases, generated from `cases.yaml` by `python -m evals.render_cases`. "
-        "Expected outcomes come from the policies in `docs/` and the orders in `supabase/seed.sql`.",
-        "",
-        "| # | id | tags | customer | expected |",
-        "|---|---|---|---|---|",
-    ]
+def render(cases: list[dict], title: str, intro: str) -> str:
+    lines = [f"# {title}", "", intro, "", "| # | id | tags | customer | expected |", "|---|---|---|---|---|"]
     for i, case in enumerate(cases, 1):
-        lines.append(f"| {i} | [{case['id']}](#{case['id']}) | {', '.join(case.get('tags', []))} | "
+        lines.append(f"| {i} | [{case['id']}](#{case['id'].replace('.', '')}) | {', '.join(case.get('tags', []))} | "
                      f"{case['customer'].split('@')[0]} | {expected(case.get('expect', {}))} |")
     for case in cases:
         expect = case.get("expect", {})
         lines += ["", f"## {case['id']}", "", f"**Customer:** {case['customer']}  ", f"**Expected:** {expected(expect)}"]
+        for key, label in (("parent", "Rewording of"), ("style", "Style"), ("technique", "Technique"), ("keep", "keep")):
+            if key in case:
+                lines[-1] += "  "
+                lines.append(f"**{label}:** {case[key]}")
         if expect.get("note"):
             lines.append(f"**Supervisor note:** {expect['note']}  ")
         if expect.get("must_not_reveal"):
@@ -61,7 +56,14 @@ def main() -> None:
             lines += ["", f"Customer message {n}:" if len(case["turns"]) > 1 else "Customer message:", "", fence(turn)]
         if case.get("rubric"):
             lines += ["", "Judge criteria:", ""] + [f"- {c}" for c in case["rubric"]]
-    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    cases = yaml.safe_load(CASES.read_text(encoding="utf-8"))
+    OUT.write_text(render(cases, "Eval cases", f"{len(cases)} cases, generated from `cases.yaml` by "
+                          "`python -m evals.render_cases`. Expected outcomes come from the policies in `docs/` "
+                          "and the orders in `supabase/seed.sql`."), encoding="utf-8")
     print(f"Wrote {OUT.relative_to(REPO_ROOT)} ({len(cases)} cases)")
 
 

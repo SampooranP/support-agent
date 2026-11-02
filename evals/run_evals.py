@@ -5,19 +5,21 @@ From the repo root:
     python -m evals.run_evals --only rewards-balance,ship-to-uk
     python -m evals.run_evals --reps 2 --variant v1
     python -m evals.run_evals --selftest           # grader checks only (oracle, null, judge negatives)
+    python -m evals.run_evals --suite extended     # the generated cases (evals/generated/, see evals/generate)
 
 The runner drives the same Agent class the API uses, with the real MCP server, Supabase and
 Claude. It resets the demo data first, so don't run it against a database with real data
 (reset_demo_data refuses in that case anyway).
 
-Output (the layout the eval report builder reads), under evals/runs/<variant>/:
+Output (the layout the eval report builder reads), under evals/runs/<variant>/ (the extended
+suite: evals/runs/extended/<variant>/):
     results.jsonl            one row per (case, rep), written as each case finishes
     traces/<id>_rep<k>.json  the full conversation, including every tool call and result
     errors.jsonl             attempts that produced nothing gradable (timeouts, API errors, ...)
     summary.json, summary.md the headline numbers
 
 Harness gate: the run refuses to start if the eval code or cases changed since they were last
-approved. After reviewing a change, approve it once with --approve-harness.
+approved. After reviewing a change, approve it once with --approve-harness (per suite).
 """
 
 import argparse
@@ -49,8 +51,14 @@ from ingestion.config import REPO_ROOT, require_env, supabase_client
 EVALS = REPO_ROOT / "evals"
 FLOW = EVALS / "runs"
 CASES = EVALS / "cases.yaml"
-HARNESS_FILES = [Path(__file__), EVALS / "grading.py", EVALS / "judge.py", EVALS / "selftest.py", CASES]
-HARNESS_SHA = FLOW / "harness.json"
+GENERATED = EVALS / "generated"
+SUITES = {
+    "core": [CASES],
+    "extended": [GENERATED / "paraphrases.yaml", GENERATED / "grid.yaml", GENERATED / "adversarial.yaml"],
+}
+# The extended suite's grid orders are only in the database after seed_grid_data(), which resets the core data too.
+RESET = {"core": "reset_demo_data", "extended": "seed_grid_data"}
+GRADER_FILES = [Path(__file__), EVALS / "grading.py", EVALS / "judge.py", EVALS / "selftest.py"]
 MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
 METRICS = ["pass", "action", "safety", "grounded", "quality"]
 VALID_TOOLS = {"search_knowledge_base", "get_order", "get_customer", "create_ticket", "issue_refund", "send_email"}
@@ -59,9 +67,14 @@ VALID_TOOLS = {"search_knowledge_base", "get_order", "get_customer", "create_tic
 # ---------------------------------------------------------------- cases
 
 
-def load_cases(path: Path = CASES) -> list[dict]:
-    """Load the cases and check them (tier-1 audit): unique ids, known customers, tools and fields."""
-    cases = yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_cases(suite: str = "core") -> list[dict]:
+    """Load the suite's cases and check them (tier-1 audit): unique ids, known customers, tools and fields.
+
+    Adversarial candidates run only once a person has marked them keep: true."""
+    cases = [case for path in SUITES[suite] if path.exists()
+             for case in yaml.safe_load(path.read_text(encoding="utf-8")) or [] if case.get("keep", True)]
+    if not cases:
+        raise SystemExit(f"No cases in the {suite} suite" + ("" if suite == "core" else "; run python -m evals.generate"))
     customers = {c["email"] for c in store.list_demo_customers()}
     errors, seen = [], set()
     for case in cases:
@@ -90,25 +103,35 @@ def load_cases(path: Path = CASES) -> list[dict]:
 # ---------------------------------------------------------------- harness gate
 
 
-def harness_sha() -> str:
+def suite_dir(suite: str) -> Path:
+    return FLOW if suite == "core" else FLOW / suite
+
+
+def harness_files(suite: str) -> list[Path]:
+    return GRADER_FILES + [p for p in SUITES[suite] if p.exists()]
+
+
+def harness_sha(suite: str = "core") -> str:
     digest = hashlib.sha256()
-    for path in HARNESS_FILES:
+    for path in harness_files(suite):
         digest.update(path.name.encode())
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))  # same sha on Windows and Linux checkouts
     return digest.hexdigest()
 
 
-def check_harness(approve: bool) -> None:
-    current = harness_sha()
+def check_harness(approve: bool, suite: str = "core") -> None:
+    current = harness_sha(suite)
+    record = suite_dir(suite) / "harness.json"
     if approve:
-        FLOW.mkdir(parents=True, exist_ok=True)
-        HARNESS_SHA.write_text(json.dumps({"sha": current, "files": [p.name for p in HARNESS_FILES]}, indent=2) + "\n")
-        print("Harness approved.")
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps({"sha": current, "files": [p.name for p in harness_files(suite)]}, indent=2) + "\n")
+        print(f"Harness approved ({suite} suite).")
         return
-    approved = json.loads(HARNESS_SHA.read_text())["sha"] if HARNESS_SHA.exists() else None
+    approved = json.loads(record.read_text())["sha"] if record.exists() else None
     if approved != current:
-        print("The eval code or cases changed since they were last approved (evals/runs/harness.json).\n"
-              "Review the change, then run once with --approve-harness.", file=sys.stderr)
+        flag = "" if suite == "core" else f" --suite {suite}"
+        print(f"The eval code or cases changed since they were last approved ({record.relative_to(REPO_ROOT)}).\n"
+              f"Review the change, then run once with --approve-harness{flag}.", file=sys.stderr)
         sys.exit(2)
 
 
@@ -277,6 +300,7 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
     judge_cost = cost_usd(judge_response.model, judge_response.usage) or 0
     row = {
         "prompt_id": case["id"],
+        "source": case.get("source", "core"),
         "prompt": "\n\n".join(case["turns"]),
         "tags": case.get("tags", []),
         "rep": rep,
@@ -348,6 +372,12 @@ def summarize(out: Path, variant: str) -> dict:
     summary["latency_s_median"] = round(statistics.median(r["latency_s"] for r in rows), 1) if rows else 0
     summary["refusals"] = sum(r["refused"] for r in rows)
     summary["failing"] = sorted({r["prompt_id"] for r in ok if r["grade"]["pass"] < 1})
+    # Generated cases share their generator's blind spots, so each source is also scored on its own.
+    by_source: dict[str, list[dict]] = {}
+    for r in ok:
+        by_source.setdefault(r.get("source", "core"), []).append(r)
+    summary["by_source"] = {src: {"rows": len(rs), "pass": sum(r["grade"]["pass"] for r in rs) / len(rs)}
+                            for src, rs in sorted(by_source.items())}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
     labels = {"pass": "Pass (all checks)", "action": "Right action", "safety": "Safety",
@@ -361,6 +391,9 @@ def summarize(out: Path, variant: str) -> dict:
         lines.append(f"| {labels[metric]} | {m['rate']:.0%} | {m['ci95'][0]:.0%}-{m['ci95'][1]:.0%} |")
     lines += ["", f"Cost: ${summary['cost_usd_total']:.2f} total, ${summary['cost_usd_median']:.3f} median per conversation"
               f" (agent + judge). Median model latency {summary['latency_s_median']} s. Refusals: {summary['refusals']}."]
+    if len(by_source) > 1:
+        lines += ["", "| Source | Conversations | Pass |", "|---|---|---|"]
+        lines += [f"| {src} | {v['rows']} | {v['pass']:.0%} |" for src, v in summary["by_source"].items()]
     if summary["failing"]:
         lines += ["", "Failing: " + ", ".join(f"`{c}`" for c in summary["failing"])]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -370,8 +403,13 @@ def summarize(out: Path, variant: str) -> dict:
 # ---------------------------------------------------------------- main
 
 
+def reset(suite: str) -> None:
+    supabase_client().rpc(RESET[suite]).execute()
+
+
 async def main_async(args) -> None:
-    cases = load_cases()
+    await in_thread(reset, args.suite)  # first, so the grid customers exist when the cases are checked
+    cases = load_cases(args.suite)
     if args.only:
         wanted = set(args.only.split(","))
         cases = [c for c in cases if c["id"] in wanted]
@@ -379,7 +417,7 @@ async def main_async(args) -> None:
         if missing:
             raise SystemExit(f"Unknown case ids: {', '.join(sorted(missing))}")
 
-    out = FLOW / args.variant
+    out = suite_dir(args.suite) / args.variant
     out.mkdir(parents=True, exist_ok=True)
     done = done_keys(out)
     todo = [(c, rep) for c in cases for rep in range(args.reps) if (c["id"], rep) not in done]
@@ -390,7 +428,6 @@ async def main_async(args) -> None:
 
     agent_client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
     judge_client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
-    await in_thread(lambda: supabase_client().rpc("reset_demo_data").execute())
 
     async with Client(StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])) as mcp:
         agent = Agent(agent_client, await Toolbox.connect(mcp), Tracer())
@@ -418,15 +455,21 @@ async def main_async(args) -> None:
             async with limit:
                 await attempt(case, rep)
 
-        # Cases where a supervisor decides change the database (refunds), so they run one at a time,
-        # each on freshly reset demo data, after the concurrent cases have finished.
-        concurrent = [(c, r) for c, r in todo if not c.get("expect", {}).get("decision")]
-        serial = [(c, r) for c, r in todo if c.get("expect", {}).get("decision")]
+        # Cases where a supervisor decides change the database (refunds), and cases that depend on the
+        # minutes since the seed ran (the 1-hour cancellation window), run one at a time, each on freshly
+        # reset demo data, after the concurrent cases have finished.
+        def serial_case(c: dict) -> bool:
+            return bool(c.get("expect", {}).get("decision") or c.get("fresh_data"))
+
+        concurrent = [(c, r) for c, r in todo if not serial_case(c)]
+        serial = [(c, r) for c, r in todo if serial_case(c)]
         await asyncio.gather(*(guarded(c, r) for c, r in concurrent))
         for case, rep in serial:
-            await in_thread(lambda: supabase_client().rpc("reset_demo_data").execute())
+            await in_thread(reset, args.suite)
             await attempt(case, rep)
         agent.tracer.flush()
+    if args.suite != "core":
+        await in_thread(reset, "core")  # take the grid customers back out of the chat UI's customer list
 
     summary = summarize(out, args.variant)
     print("\n" + (out / "summary.md").read_text(encoding="utf-8"))
@@ -437,6 +480,8 @@ async def main_async(args) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--suite", choices=list(SUITES), default="core",
+                        help="core: the hand-written cases.yaml; extended: the generated cases")
     parser.add_argument("--variant", default="baseline", help="output directory name: baseline, v1, v2, ...")
     parser.add_argument("--reps", type=int, default=1, help="runs per case")
     parser.add_argument("--only", help="comma-separated case ids")
@@ -451,13 +496,15 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
 
     if args.approve_harness:
-        check_harness(approve=True)
+        check_harness(approve=True, suite=args.suite)
         return
-    check_harness(approve=False)
+    check_harness(approve=False, suite=args.suite)
     if args.check_harness:
         print("Harness matches the approved version.")
         return
     if args.selftest:
+        if args.suite != "core":
+            raise SystemExit("--selftest checks the graders on the core cases; run it without --suite")
         from evals.selftest import run_selftest
 
         sys.exit(asyncio.run(run_selftest()))

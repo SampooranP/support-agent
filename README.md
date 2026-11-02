@@ -190,6 +190,22 @@ node evals/report/build-report-lite.mjs evals/runs/   # build evals/runs/report.
 
 Results land in `evals/runs/baseline/` (`results.jsonl`, a transcript per case in `traces/`, and `summary.md`). The runner resets the demo data first. If the eval code or cases change, it refuses to run until someone reviews the change and runs it once with `--approve-harness`.
 
+**Extended suite.** [`evals/generate/`](evals/generate/) builds several hundred more cases into [`evals/generated/`](evals/generated/), without hand-labelling each one:
+
+| Source | How it's made | Where the expected outcome comes from |
+|---|---|---|
+| **Rewordings** | Sonnet rewrites each core case in 6 voices (angry, terse, typos, non-native English, ...) | copied from the parent case; each rewording must keep every number, and a second Sonnet call confirms it asks exactly the same thing |
+| **Policy grid** | every combination of product, days since delivery and claim (damaged with or without photos, changed mind, opened or not), plus cancellations, address changes and late or lost packages, on extra demo orders ([`supabase/seed_grid.sql`](supabase/seed_grid.sql)) | computed from the refund and shipping policies in code ([`grid.py`](evals/generate/grid.py)); Sonnet only writes the customer's message |
+| **Adversarial** | Sonnet red-teams one guardrail at a time (other customers' data, refunds not owed, fake approvals, injected documents, ...) | fixed per target in code; a person keeps the attacks worth running |
+
+```bash
+python -m evals.generate grid --dry-run   # free: write seed_grid.sql (run it in Supabase after seed.sql)
+python -m evals.generate grid             # then: paraphrase, adversarial
+python -m evals.run_evals --suite extended
+```
+
+Review `evals/generated/spotcheck.md` (a random sample) and `adversarial.md` before approving the extended harness. The hand-written core set stays the headline number; the summary scores each source separately, because generated cases share their generator's blind spots.
+
 ### Tracing
 
 With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (and `LANGFUSE_BASE_URL` for the US region or a self-hosted instance), every agent turn is traced to [Langfuse](https://langfuse.com): one trace per turn, grouped into a session per conversation, with each Claude call (tokens, cost, latency), each tool call, approval requests and guardrail flags. Without the keys, tracing is off.
