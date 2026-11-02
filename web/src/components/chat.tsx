@@ -15,6 +15,7 @@ import type {
   ToolStep,
   TranscriptItem,
 } from "@/lib/types";
+import { SPECIALIST_TITLES } from "@/lib/types";
 
 const POLL_MS = 2500;
 
@@ -32,6 +33,7 @@ export function Chat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationStatus, setConversationStatus] = useState<ConversationStatus>("active");
   const [thinking, setThinking] = useState<string | null>(null);
+  const [specialist, setSpecialist] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const conversationRef = useRef<string | null>(null);
@@ -45,6 +47,7 @@ export function Chat() {
     onData: (part) => {
       if (part.type === "data-status") setThinking(part.data.text);
       if (part.type === "data-conversation") setConversationStatus(part.data.status);
+      if (part.type === "data-specialist") setSpecialist(part.data.title);
     },
     onFinish: () => setThinking(null),
     onError: () => setThinking(null),
@@ -59,6 +62,7 @@ export function Chat() {
     const conversation = (await res.json()) as Conversation;
     if (conversationRef.current !== id) return;
     setConversationStatus(conversation.status);
+    setSpecialist(conversation.specialist ? (SPECIALIST_TITLES[conversation.specialist] ?? null) : null);
     setMessages(toUIMessages(conversation.items));
   }, [setMessages]);
 
@@ -111,6 +115,7 @@ export function Chat() {
     conversationRef.current = body.id;
     setConversationId(body.id);
     setConversationStatus("active");
+    setSpecialist(null);
   }
 
   function send(text: string) {
@@ -149,6 +154,11 @@ export function Chat() {
           <button onClick={() => signIn(customer.email)} className="text-muted underline-offset-2 hover:underline">
             New conversation
           </button>
+        )}
+        {specialist && (
+          <span className="rounded-full border border-line px-2 py-0.5 text-xs text-muted" title="The specialist answering">
+            {specialist} specialist
+          </span>
         )}
       </div>
 

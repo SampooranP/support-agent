@@ -9,6 +9,7 @@ type AgentEvent =
   | { type: "retry" }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: ToolStep["status"]; label?: string }
+  | { type: "route"; specialist: string; title: string }
   | { type: "approval"; id: string; tool_name: string; summary: string }
   | { type: "sources"; items: string[] }
   | { type: "error"; message: string }
@@ -98,6 +99,9 @@ export async function POST(req: Request) {
             }
             break;
           }
+          case "route":
+            writer.write({ type: "data-specialist", data: { name: event.specialist, title: event.title }, transient: true });
+            break;
           case "approval": {
             endText();
             // The request step is finished; the approval card below it shows what happens next.

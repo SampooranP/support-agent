@@ -16,10 +16,16 @@ OFFICIAL = {"agent": "claude-opus-5-5", "judge": "claude-sonnet-5-5"}
 AGENT_MODEL = os.getenv("AGENT_MODEL", DEV_MODEL)  # the support agent and the RAG script
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", DEV_MODEL)  # the eval judge
 GEN_MODEL = os.getenv("GEN_MODEL", DEV_MODEL)  # the eval case generators
+ROUTER_MODEL = os.getenv("ROUTER_MODEL", DEV_MODEL)  # picks the specialist; Haiku for official runs too
 
 
 def is_official() -> bool:
     return AGENT_MODEL == OFFICIAL["agent"] and JUDGE_MODEL == OFFICIAL["judge"]
+
+
+def supports_system_messages(model: str) -> bool:
+    """Whether the model takes role "system" messages mid-conversation (Haiku 5.5 doesn't)."""
+    return not model.startswith("claude-haiku")
 
 
 def fallback_args(model: str) -> dict:

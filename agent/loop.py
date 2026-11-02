@@ -18,10 +18,11 @@ from typing import Any
 
 import anthropic
 
-from agent import guardrails, store
-from agent.models import AGENT_MODEL, fallback_args
+from agent import guardrails, router, store
+from agent.models import AGENT_MODEL, ROUTER_MODEL, fallback_args, supports_system_messages
 from agent.pricing import usage_dict
 from agent.prompts import system_blocks
+from agent.specialists import SPECIALISTS, handoff_note, not_allowed
 from agent.store import in_thread
 from agent.tools import RISKY_TOOLS, STATUS_LABELS, ApprovalNeeded, Toolbox, ToolResult
 from agent.tracing import Tracer
@@ -48,7 +49,24 @@ class Agent:
     async def handle_user_message(self, conversation: dict, text: str, emit: Emit = _ignore) -> None:
         conversation["messages"].append({"role": "user", "content": text})
         with self.tracer.turn("chat-turn", conversation, input=text):
+            await self._route(conversation, emit)
             await self._run(conversation, emit)
+
+    async def _route(self, conversation: dict, emit: Emit) -> None:
+        """Pick the specialist for the new message. A change is announced to Claude with a note appended
+        after the message, so the history before it (and its cache and thinking) stays untouched."""
+        current = conversation.get("specialist")
+        with self.tracer.generation("router", ROUTER_MODEL, input=conversation["messages"][-1]) as generation:
+            name, response = await router.route(self.client, conversation["messages"], current)
+            if response is not None:
+                self.tracer.record_generation(generation, response)
+        specialist = SPECIALISTS[name]
+        if name != current:
+            conversation["messages"].append({"role": "system", "content": handoff_note(specialist)})
+            conversation["specialist"] = name
+        await emit({"type": "route", "specialist": name, "title": specialist.title, "changed": name != current,
+                    "model": response.model if response else None,
+                    "usage": usage_dict(response.usage) if response else usage_dict({})})
 
     async def resume_after_decisions(self, conversation: dict, emit: Emit = _ignore) -> bool:
         """If every approval in the paused turn is decided, finish the turn. Returns True if it resumed.
@@ -112,7 +130,7 @@ class Agent:
         messages = conversation["messages"]
         try:
             customer = await in_thread(store.get_customer_by_email, conversation["customer_email"])
-            system = system_blocks(customer["name"], customer["email"])
+            system = system_blocks(customer["name"], customer["email"], conversation["created_at"][:10])
             for _ in range(MAX_TOOL_ROUNDS):
                 response = await self._stream(system, messages, emit)
                 content, tool_uses = _history_content(response.content)
@@ -163,7 +181,7 @@ class Agent:
                         max_tokens=16000,
                         system=system,
                         tools=self.toolbox.claude_tools(),
-                        messages=messages,
+                        messages=_request_messages(messages, MODEL),
                         output_config={"effort": "medium"},
                         cache_control={"type": "ephemeral"},
                         **fallback_args(MODEL),
@@ -196,6 +214,12 @@ class Agent:
             error = self.toolbox.validate(tool_use.name, tool_use.input)
             if error:
                 results[tool_use.id] = ToolResult(error, is_error=True).as_block(tool_use.id)
+                continue
+            # Every specialist sees every tool (so the prompt prefix never changes); this is the real limit.
+            # A conversation from before routing has no specialist and no limit.
+            specialist = SPECIALISTS.get(conversation.get("specialist") or "")
+            if specialist and tool_use.name not in specialist.tools:
+                results[tool_use.id] = ToolResult(not_allowed(specialist, tool_use.name), is_error=True).as_block(tool_use.id)
                 continue
 
             label = STATUS_LABELS.get(tool_use.name, tool_use.name)
@@ -270,6 +294,11 @@ def _close_dangling_tool_uses(conversation: dict) -> None:
         return  # the results are held in pending_turn until the approvals are decided
     messages = conversation["messages"]
     last = messages[-1] if messages else None
+    if last and last["role"] == "system":
+        # A specialist note must be last or followed by an assistant turn; if Claude never answered
+        # (an error), close it with one so the customer's next message keeps the history valid.
+        messages.append({"role": "assistant", "content": "Sorry, something went wrong on my side."})
+        return
     if not last or last["role"] != "assistant" or isinstance(last["content"], str):
         return
     ids = [b["id"] for b in last["content"] if b["type"] == "tool_use"]
@@ -277,6 +306,24 @@ def _close_dangling_tool_uses(conversation: dict) -> None:
         messages.append({"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": i, "content": INTERRUPTED, "is_error": True} for i in ids
         ]})
+
+
+def _request_messages(messages: list[dict], model: str) -> list[dict]:
+    """The stored history as the model takes it. Models without mid-conversation system messages
+    (Haiku 5.5) get each specialist note as a text block on the customer message before it. The
+    conversion is the same on every request, so the history the model sees is still append-only."""
+    if supports_system_messages(model):
+        return messages
+    out: list[dict] = []
+    for message in messages:
+        if message["role"] != "system":
+            out.append(message)
+            continue
+        previous = out[-1]
+        content = previous["content"]
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+        out[-1] = {**previous, "content": [*blocks, {"type": "text", "text": f"<operator_note>{message['content']}</operator_note>"}]}
+    return out
 
 
 def _history_content(blocks) -> tuple[list[dict], list]:
@@ -327,6 +374,8 @@ def transcript(conversation: dict, approvals: list[dict]) -> list[dict]:
             if isinstance(message["content"], str):
                 items.append({"role": "user", "text": message["content"]})
             continue
+        if message["role"] == "system":
+            continue  # a specialist note, for Claude only; the UI shows the current specialist instead
         content = message["content"]
         if isinstance(content, str):
             items.append({"role": "assistant", "text": content, "sources": []})

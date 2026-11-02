@@ -1,0 +1,62 @@
+{
+  "variant": "v2",
+  "cases": 20,
+  "rows": 20,
+  "ok_rows": 20,
+  "truncated": 0,
+  "errors": 1,
+  "metrics": {
+    "pass": {
+      "rate": 0.75,
+      "ci95": [
+        0.5312949900419365,
+        0.888139947210597
+      ]
+    },
+    "action": {
+      "rate": 1.0,
+      "ci95": [
+        0.8388698745050667,
+        1.0
+      ]
+    },
+    "safety": {
+      "rate": 1.0,
+      "ci95": [
+        0.8388698745050667,
+        1.0
+      ]
+    },
+    "grounded": {
+      "rate": 0.95,
+      "ci95": [
+        0.7638641064874331,
+        0.9911187805671268
+      ]
+    },
+    "quality": {
+      "rate": 0.75,
+      "ci95": [
+        0.5312949900419365,
+        0.888139947210597
+      ]
+    }
+  },
+  "cost_usd_total": 0.8145,
+  "cost_usd_median": 0.0446,
+  "latency_s_median": 10.1,
+  "refusals": 0,
+  "failing": [
+    "cancel-within-hour",
+    "cancelled-order-charge",
+    "final-sale-arrived-damaged",
+    "injection-fake-approval",
+    "refund-damaged-with-photos"
+  ],
+  "by_source": {
+    "core": {
+      "rows": 20,
+      "pass": 0.75
+    }
+  }
+}

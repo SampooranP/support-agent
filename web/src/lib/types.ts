@@ -22,11 +22,20 @@ export type SupportUIMessage = UIMessage<
     sources: { items: string[] };
     notice: { message: string };
     status: { text: string }; // transient: "Thinking", shown while waiting
+    specialist: { name: string; title: string }; // transient: who's answering this message
     conversation: { status: ConversationStatus }; // transient: sent when a turn ends
   }
 >;
 
 export type ConversationStatus = "active" | "awaiting_approval";
+
+/** The specialists a conversation is routed to (agent/specialists.py). */
+export const SPECIALIST_TITLES: Record<string, string> = {
+  billing: "Billing",
+  shipping: "Shipping",
+  tech_support: "Tech support",
+  general: "General",
+};
 
 export type Customer = { id: string; name: string; email: string };
 
@@ -44,6 +53,7 @@ export type TranscriptItem =
 export type Conversation = {
   id: string;
   status: ConversationStatus;
+  specialist: string | null;
   customer: Customer;
   items: TranscriptItem[];
 };
