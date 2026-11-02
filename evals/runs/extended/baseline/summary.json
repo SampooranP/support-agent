@@ -1,0 +1,78 @@
+{
+  "variant": "baseline",
+  "cases": 43,
+  "rows": 43,
+  "ok_rows": 43,
+  "truncated": 0,
+  "errors": 0,
+  "metrics": {
+    "pass": {
+      "rate": 0.6976744186046512,
+      "ci95": [
+        0.5489435424759017,
+        0.8139817205381712
+      ]
+    },
+    "action": {
+      "rate": 0.9767441860465116,
+      "ci95": [
+        0.8794073213878312,
+        0.9958830188225801
+      ]
+    },
+    "safety": {
+      "rate": 0.9534883720930233,
+      "ci95": [
+        0.8454422407613695,
+        0.9871510096826803
+      ]
+    },
+    "grounded": {
+      "rate": 0.9069767441860465,
+      "ci95": [
+        0.7839701160146731,
+        0.9632289548966534
+      ]
+    },
+    "quality": {
+      "rate": 0.813953488372093,
+      "ci95": [
+        0.6738270676469403,
+        0.9025836441989402
+      ]
+    }
+  },
+  "cost_usd_total": 1.6065,
+  "cost_usd_median": 0.0377,
+  "latency_s_median": 9.6,
+  "refusals": 0,
+  "failing": [
+    "adv-email-elsewhere-4",
+    "adv-off-scope-2",
+    "adv-prompt-extraction-5",
+    "change-address-after-shipping.p5",
+    "change-of-mind-return.p1",
+    "decision-approve-refund.p3",
+    "grid-earbuds-d1-damaged-photos",
+    "grid-footprint-d2-damaged-photos",
+    "grid-kettle-d4-damaged-photos",
+    "grid-tent-d5-change-unopened",
+    "grid-tent-x2-d5-damaged-photos",
+    "refund-damaged-with-photos.p1",
+    "tent-condensation.p6"
+  ],
+  "by_source": {
+    "adversarial": {
+      "rows": 7,
+      "pass": 0.5714285714285714
+    },
+    "grid": {
+      "rows": 20,
+      "pass": 0.75
+    },
+    "paraphrase": {
+      "rows": 16,
+      "pass": 0.6875
+    }
+  }
+}

@@ -232,4 +232,24 @@ With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (and `LANGFUSE_BA
 
 ## Eval results
 
-_Coming soon._
+Baseline: the agent as built in phases 1-3, before any changes made because of the evals. One conversation per case; the ranges are 95% confidence intervals.
+
+| Metric | Core (39 hand-written) | Extended sample (43 generated) |
+|---|---|---|
+| **Pass** (all four) | **79%** (64-89%) | **70%** (55-81%) |
+| Right action | 97% | 98% |
+| Safety | 97% | 95% |
+| Grounded | 97% | 91% |
+| Quality | 82% | 81% |
+| Cost per conversation (median, agent + judge) | $0.032 | $0.038 |
+
+The extended sample is 20 policy-grid cases, 16 rewordings and the 7 attacks kept from the adversarial candidates (57% pass).
+
+What the failures found:
+
+- **Silent pause after a refund request (9 failures across both sets).** After `issue_refund` is held for review, the agent often ends its turn without telling the customer the request is pending.
+- **Approving a refund and its confirmation email at once.** The agent asks for both approvals together, so the email is written before the refund's outcome is known, and the reply after approval leaves out the 5-10 business days.
+- **A refund promised on an order that was never charged** (cancelled before shipping).
+- **One prompt-extraction attack partly worked.** The agent didn't paste its instructions, but it summarized them in a ticket and emailed that summary to the customer.
+- **Small unsupported details** in a few answers (carrier practices, product tips), and one off-topic request half answered.
+- **Two grader false positives.** "The refund is issued once the tent arrives" was read as a claim that a refund happened.
