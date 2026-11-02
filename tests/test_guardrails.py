@@ -55,10 +55,14 @@ def test_negated_and_unrelated_phrasing_is_not_a_claim():
         # Quoted from the refund policy in a baseline eval run.
         "Once approved, the refund is issued to your original payment method.",
         "If approved, the refund is processed within 2 business days.",
+        # Agent replies flagged in the baseline runs: the condition comes after the claim.
+        "**Timing**\nThe refund is processed once the tent reaches us.",
+        "The refund is issued once the tent arrives back with us, not before.",
     ]:
         assert unconfirmed_claims(text, set()) == [], text
     # A negation in an earlier sentence doesn't hide a real claim in the next one.
     assert unconfirmed_claims("That wasn't ideal. Your refund has been issued.", set()) == ["issue_refund"]
+    assert unconfirmed_claims("Your refund has been issued, once again sorry.", set()) == ["issue_refund"]
 
 
 def test_claims_backed_by_an_executed_action_are_fine():

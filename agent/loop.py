@@ -28,6 +28,8 @@ from agent.tracing import Tracer
 MODEL = "claude-opus-5-5"
 MAX_TOOL_ROUNDS = 12  # per turn, as a backstop against loops
 INTERRUPTED = "This tool call was interrupted by an internal error and did not complete."
+ONE_AT_A_TIME = ("Not requested: another action in this reply is already waiting for a supervisor's review. "
+                 "Request this one, if it's still needed, after that result is in.")
 Emit = Callable[[dict], Awaitable[None]]
 log = logging.getLogger("agent")
 
@@ -204,7 +206,11 @@ class Agent:
                 try:
                     if tool_use.name in RISKY_TOOLS:
                         check = await self.toolbox.check_risky(tool_use.name, tool_use.input, conversation)
-                        if isinstance(check, ApprovalNeeded):
+                        if isinstance(check, ApprovalNeeded) and awaiting:
+                            # One approval per pause, so an email confirming a refund is written after the
+                            # refund's outcome is known, not alongside the request.
+                            result = ToolResult(ONE_AT_A_TIME, is_error=True)
+                        elif isinstance(check, ApprovalNeeded):
                             approval = await in_thread(store.create_approval, conversation["id"], tool_use.id,
                                                        check.tool_name, check.tool_input, check.summary)
                             awaiting.append(tool_use.id)
@@ -213,7 +219,8 @@ class Agent:
                             await emit({"type": "approval", "id": approval["id"], "tool_name": check.tool_name,
                                         "summary": check.summary})
                             continue
-                        result = check
+                        else:
+                            result = check
                     else:
                         result = await self.toolbox.run(tool_use.name, tool_use.input, conversation)
                 except Exception:

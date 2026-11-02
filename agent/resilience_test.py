@@ -12,6 +12,7 @@ Checks:
   4. A Claude error during a turn is reported once, before a single "done".
   5. An approval that already executed is reported as done, not re-run or called rejected.
   6. Malformed IDs are "not found", not a database error.
+  7. Only one risky call per reply is held for approval; a second gets an error to retry later.
 """
 
 import asyncio
@@ -21,7 +22,7 @@ from types import SimpleNamespace
 from mcp import Client
 
 from agent import store
-from agent.loop import INTERRUPTED, Agent, _close_dangling_tool_uses
+from agent.loop import INTERRUPTED, ONE_AT_A_TIME, Agent, _close_dangling_tool_uses
 from agent.tools import Toolbox
 from ingestion.config import REPO_ROOT, supabase_client
 
@@ -159,6 +160,18 @@ async def main() -> None:
         rejected = {**store.get_approval(approval["id"]), "status": "rejected", "reviewer_note": "no"}
         outcome = await agent._approval_outcome(rejected, saved, Events())
         check("rejected approval reported as rejected", outcome.is_error and "rejected" in outcome.content)
+
+        # 7. Two risky calls in one reply: only the first is held; the second is sent back to wait.
+        conversation = new_conversation()
+        refund = SimpleNamespace(id="toolu_r", name="issue_refund",
+                                 input={"order_number": "1042", "amount": 10.0, "reason": "test"})
+        email = SimpleNamespace(id="toolu_e", name="send_email",
+                                input={"subject": "Your refund", "body": "Your refund has been issued."})
+        results, awaiting = await agent._run_tools(conversation, [refund, email], Events())
+        held = store.list_approvals(None, conversation["id"])
+        check("second risky call in a reply isn't requested", awaiting == ["toolu_r"] and len(held) == 1
+              and results["toolu_e"]["is_error"] and results["toolu_e"]["content"] == ONE_AT_A_TIME,
+              f"awaiting {awaiting}, {len(held)} approval(s)")
 
     # 6. Malformed IDs.
     check("malformed conversation id -> None", store.get_conversation("not-a-uuid") is None)

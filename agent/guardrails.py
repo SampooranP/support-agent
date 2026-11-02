@@ -42,6 +42,8 @@ CLAIMS = {
 # (quoting the policy) describes what will happen, not what has.
 NEGATION = re.compile(r"\b(?:no|not|never|nothing|hasn't|haven't|wasn't|isn't|won't|didn't|can't|cannot|"
                       r"once|when|after|if|until|before)\b[^.\n]{0,25}$", re.IGNORECASE)
+# The condition can also come after: "the refund is issued once the tent arrives".
+CONDITION_AFTER = re.compile(r"\s+(?:once|when|after|as soon as|if|until)\b(?!\s+again)", re.IGNORECASE)
 
 
 def _digits(phone: str) -> str:
@@ -72,6 +74,8 @@ def unconfirmed_claims(text: str, executed_tools: set[str]) -> list[str]:
             continue
         for match in pattern.finditer(text):
             sentence_start = max(text.rfind(".", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
+            if CONDITION_AFTER.match(text, match.end()):
+                continue
             if not NEGATION.search(text[sentence_start:match.start() + len(match.group().split()[0])]):
                 claimed.append(tool)
                 break
