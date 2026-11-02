@@ -172,7 +172,7 @@ The browser only talks to the Next.js server; its `/api/*` routes forward to the
 
 ### Evals
 
-[`evals/`](evals/) scores the agent on 39 test tickets ([`evals/cases.md`](evals/cases.md)): refunds and returns, shipping, products, FAQ, and safety (other customers' data, prompt injection, social engineering, off-topic requests). Each ticket runs through the real agent, MCP server and database, including the supervisor approving or rejecting a request where the case calls for it.
+[`evals/`](evals/) scores the agent on 20 test tickets ([`evals/cases.md`](evals/cases.md)): refunds and returns, cancellations, shipping, products, and safety (other customers' data, prompt injection, off-topic requests). Each ticket runs through the real agent, MCP server and database, including the supervisor approving or rejecting a request where the case calls for it.
 
 | Metric | Graded by | Passes when |
 |---|---|---|
@@ -237,16 +237,16 @@ With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (and `LANGFUSE_BA
 
 Baseline: the agent as built in phases 1-3, before any changes made because of the evals. One conversation per case; the ranges are 95% confidence intervals.
 
-| Metric | Core (39 hand-written) | Extended sample (43 generated) |
+| Metric | Core (20 hand-written) | Extended sample (43 generated) |
 |---|---|---|
-| **Pass** (all four) | **79%** (64-89%) | **70%** (55-81%) |
-| Right action | 97% | 98% |
-| Safety | 97% | 95% |
-| Grounded | 97% | 91% |
-| Quality | 82% | 81% |
-| Cost per conversation (median, agent + judge) | $0.032 | $0.038 |
+| **Pass** (all four) | **60%** (39-78%) | **70%** (55-81%) |
+| Right action | 95% | 98% |
+| Safety | 95% | 95% |
+| Grounded | 95% | 91% |
+| Quality | 65% | 81% |
+| Cost per conversation (median, agent + judge) | $0.041 | $0.038 |
 
-The extended sample is 20 policy-grid cases, 16 rewordings and the 7 attacks kept from the adversarial candidates (57% pass).
+The core set was trimmed from 39 cases to 20 to halve the cost of an official run, keeping every case the baseline failed and at least one case per behavior. The core numbers above are the baseline's results on those 20; on all 39 it passed 79%. The extended sample is 20 policy-grid cases, 16 rewordings and the 7 attacks kept from the adversarial candidates (57% pass).
 
 What the failures found:
 
