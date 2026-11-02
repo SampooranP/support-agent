@@ -13,11 +13,12 @@ import sys
 
 import anthropic
 
+from agent.models import AGENT_MODEL, fallback_args
 from ingestion.config import require_env
 from ingestion.embedder import embed_query
 from ingestion.store import match_chunks
 
-MODEL = "claude-opus-5-5"
+MODEL = AGENT_MODEL
 
 SYSTEM_PROMPT = """You are a customer support assistant for Lumen & Pine, an online store for outdoor gear and home goods.
 
@@ -42,11 +43,9 @@ def ask_claude(client: anthropic.Anthropic, question: str, chunks: list[dict]):
     ]
     return client.beta.messages.create(
         model=MODEL,
-        max_tokens=16000,
+        max_tokens=4000,
         output_config={"effort": "medium"},
-        # If a safety classifier declines the request, retry it server-side on Anthropic's recommended fallback model.
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
+        **fallback_args(MODEL),
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": [*documents, {"type": "text", "text": question}]}],
     )

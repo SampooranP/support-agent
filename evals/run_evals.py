@@ -1,7 +1,8 @@
 """Run the eval suite against the real agent and grade every conversation.
 
 From the repo root:
-    python -m evals.run_evals                      # all cases, 1 rep, variant "baseline"
+    python -m evals.run_evals                      # a fixed sample of 20 cases, 1 rep, variant "baseline"
+    python -m evals.run_evals --full               # every case
     python -m evals.run_evals --only rewards-balance,ship-to-uk
     python -m evals.run_evals --reps 2 --variant v1
     python -m evals.run_evals --selftest           # grader checks only (oracle, null, judge negatives)
@@ -10,6 +11,10 @@ From the repo root:
 The runner drives the same Agent class the API uses, with the real MCP server, Supabase and
 Claude. It resets the demo data first, so don't run it against a database with real data
 (reset_demo_data refuses in that case anyway).
+
+Models come from agent/models.py: Haiku 5.5 by default, for cheap development runs. Official
+numbers need AGENT_MODEL=claude-opus-5-5 and JUDGE_MODEL=claude-sonnet-5-5; any other models write
+under a dev/ folder (evals/runs/dev/<variant>/), so they never mix with the official results.
 
 Output (the layout the eval report builder reads), under evals/runs/<variant>/ (the extended
 suite: evals/runs/extended/<variant>/):
@@ -27,6 +32,7 @@ import asyncio
 import hashlib
 import json
 import math
+import random
 import statistics
 import sys
 import time
@@ -39,6 +45,7 @@ from mcp import Client, StdioServerParameters
 
 from agent import store
 from agent.loop import INTERRUPTED, MODEL, Agent
+from agent.models import JUDGE_MODEL, is_official
 from agent.pricing import cost_usd, usage_dict
 from agent.prompts import system_prompt
 from agent.store import in_thread
@@ -292,8 +299,8 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
     action_ok, action_why = grade_action(expect, outcome)
     safety_ok, safety_why = grade_safety(expect, outcome)
     try:
-        context = context_text(result["customer"], result["conversation"]["created_at"][:10], result["tools"])
-        verdict, judge_response = await judge(judge_client, trace, case.get("rubric", []), context)
+        context = context_text(result["customer"], result["conversation"]["created_at"][:10])
+        verdict, judge_response = await judge(judge_client, trace, case.get("rubric", []), context, result["tools"])
     except Exception as e:
         raise CaseError("grader_error", f"judge failed: {e}", calls) from e
     grade = {
@@ -424,12 +431,18 @@ async def main_async(args) -> None:
         missing = wanted - {c["id"] for c in cases}
         if missing:
             raise SystemExit(f"Unknown case ids: {', '.join(sorted(missing))}")
+    elif not args.full and args.sample < len(cases):
+        # The same seed picks the same cases every run, so a sample's baseline and v1 compare like for like.
+        picked = set(map(id, random.Random(args.seed).sample(cases, args.sample)))
+        cases = [c for c in cases if id(c) in picked]
 
-    out = suite_dir(args.suite) / args.variant
+    out = suite_dir(args.suite) / ("" if is_official() else "dev") / args.variant
     out.mkdir(parents=True, exist_ok=True)
     done = done_keys(out)
     todo = [(c, rep) for c in cases for rep in range(args.reps) if (c["id"], rep) not in done]
     print(f"{len(todo)} attempt(s) to run ({len(done)} already done) -> {out.relative_to(REPO_ROOT)}")
+    if todo:  # the baselines averaged 2.4-2.5 agent calls per conversation
+        print(f"About {round(len(todo) * 2.5)} agent calls ({MODEL}) and {len(todo)} judge calls ({JUDGE_MODEL}).")
     if not todo:
         print(json.dumps(summarize(out, args.variant)["metrics"], indent=2))
         return
@@ -493,6 +506,9 @@ def main() -> None:
     parser.add_argument("--variant", default="baseline", help="output directory name: baseline, v1, v2, ...")
     parser.add_argument("--reps", type=int, default=1, help="runs per case")
     parser.add_argument("--only", help="comma-separated case ids")
+    parser.add_argument("--sample", type=int, default=20, help="run this many cases, picked by --seed (default 20)")
+    parser.add_argument("--seed", type=int, default=1, help="which sample --sample picks")
+    parser.add_argument("--full", action="store_true", help="run every case instead of a sample")
     parser.add_argument("--concurrency", type=int, default=3)
     parser.add_argument("--timeout-s", type=float, default=420, help="wall-clock limit per case")
     parser.add_argument("--approve-harness", action="store_true", help="record the current eval code as reviewed")

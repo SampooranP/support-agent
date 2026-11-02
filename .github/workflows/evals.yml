@@ -1,6 +1,7 @@
 # The eval suite: real Claude calls against the demo Supabase project, billed to ANTHROPIC_API_KEY.
-# Runs only when asked: "Run workflow" on the Actions tab, or the `run-evals` label on a PR
-# (it re-runs on each push while the label is on). Scores are posted as a PR comment.
+# Runs only when asked: "Run workflow" on the Actions tab, or adding the `run-evals` label to a PR
+# (pushes don't re-run it; remove and re-add the label for a fresh run). Scores are posted as a PR
+# comment. Development models (Haiku) unless "official" is ticked on a manual run.
 name: Evals
 
 on:
@@ -9,8 +10,12 @@ on:
       reps:
         description: Runs per case
         default: "1"
+      official:
+        description: Official models (Opus agent, Sonnet judge), about 25x the cost
+        type: boolean
+        default: false
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -23,7 +28,7 @@ concurrency:
 
 jobs:
   evals:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-evals')
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-evals'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -35,6 +40,10 @@ jobs:
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
       LANGFUSE_TRACING_ENVIRONMENT: ci-evals
+      AGENT_MODEL: ${{ github.event.inputs.official == 'true' && 'claude-opus-5-5' || 'claude-haiku-5-5' }}
+      JUDGE_MODEL: ${{ github.event.inputs.official == 'true' && 'claude-sonnet-5-5' || 'claude-haiku-5-5' }}
+      # Where the runner writes: official models next to the committed baseline, others under dev/.
+      RUNS: ${{ github.event.inputs.official == 'true' && 'evals/runs' || 'evals/runs/dev' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,23 +60,26 @@ jobs:
       - name: Run evals
         env:
           REPS: ${{ github.event.inputs.reps || '1' }}
-        run: python -m evals.run_evals --reps "$REPS"
+        # Clear the committed results first, or the runner counts every case as done.
+        run: |
+          rm -rf "$RUNS/baseline"
+          python -m evals.run_evals --full --reps "$REPS"
       - name: Build report
         if: always()
-        run: node evals/report/build-report-lite.mjs evals/runs/
+        run: node evals/report/build-report-lite.mjs "$RUNS/"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: eval-report
           path: |
-            evals/runs/report.html
-            evals/runs/baseline/
+            ${{ env.RUNS }}/report.html
+            ${{ env.RUNS }}/baseline/
       - name: Comment scores on the PR
         if: always() && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f evals/runs/baseline/summary.md ]; then
-            { cat evals/runs/baseline/summary.md; echo; echo "Full report: the \`eval-report\` artifact of [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; } > comment.md
+          if [ -f "$RUNS/baseline/summary.md" ]; then
+            { cat "$RUNS/baseline/summary.md"; echo; echo "Full report: the \`eval-report\` artifact of [this run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."; } > comment.md
             gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
           fi

@@ -184,9 +184,12 @@ The browser only talks to the Next.js server; its `/api/*` routes forward to the
 
 ```bash
 python -m evals.run_evals --selftest     # check the graders: known-good answers pass, known-bad ones fail
-python -m evals.run_evals                # run every case (real Claude calls; prints cost per case)
+python -m evals.run_evals                # a fixed sample of 20 cases (real Claude calls; prints cost per case)
+python -m evals.run_evals --full         # every case
 node evals/report/build-report-lite.mjs evals/runs/   # build evals/runs/report.html
 ```
+
+Every model defaults to Claude Haiku 5.5, so development runs cost cents (results go to `evals/runs/dev/`). The numbers below are official runs, with `AGENT_MODEL=claude-opus-5-5` and `JUDGE_MODEL=claude-sonnet-5-5` set in `.env` or the shell.
 
 Results land in `evals/runs/baseline/` (`results.jsonl`, a transcript per case in `traces/`, and `summary.md`). The runner resets the demo data first. If the eval code or cases change, it refuses to run until someone reviews the change and runs it once with `--approve-harness`.
 

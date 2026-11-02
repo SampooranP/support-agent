@@ -97,14 +97,15 @@ async def run_selftest() -> int:
 
     client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
     rubric = next(c for c in cases if c["id"] == "expedited-shipping-cost")["rubric"]
-    context = context_text(maya, "2026-11-01", [
+    context = context_text(maya, "2026-11-01")
+    tools = [
         "search_knowledge_base: Search the support documents and product manuals (Trailhead 2P tent, Ember electric "
         "kettle, Drift earbuds).",
         "create_ticket: Open a support ticket for follow-up by a person.",
-    ])
+    ]
 
     async def judge(trace: list[dict]):
-        return await judge_trace(client, trace, rubric, context)
+        return await judge_trace(client, trace, rubric, context, tools)
 
     good, _ = await judge(expedited_trace("Expedited shipping takes 2-3 business days and costs $12.99."))
     check("judge passes a correct, grounded answer", good.grounded and good.quality, good.quality_reason)

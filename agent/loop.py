@@ -19,13 +19,14 @@ from typing import Any
 import anthropic
 
 from agent import guardrails, store
+from agent.models import AGENT_MODEL, fallback_args
 from agent.pricing import usage_dict
 from agent.prompts import system_blocks
 from agent.store import in_thread
 from agent.tools import RISKY_TOOLS, STATUS_LABELS, ApprovalNeeded, Toolbox, ToolResult
 from agent.tracing import Tracer
 
-MODEL = "claude-opus-5-5"
+MODEL = AGENT_MODEL
 MAX_TOOL_ROUNDS = 12  # per turn, as a backstop against loops
 INTERRUPTED = "This tool call was interrupted by an internal error and did not complete."
 ONE_AT_A_TIME = ("Not requested: another action in this reply is already waiting for a supervisor's review. "
@@ -157,15 +158,15 @@ class Agent:
                 with self.tracer.generation("claude", MODEL, input=messages[-1]) as generation:
                     async with self.client.beta.messages.stream(
                         model=MODEL,
-                        max_tokens=64000,
+                        # A cap, not a cost: replies plus thinking run well under 2K tokens, and this
+                        # stops a runaway generation early.
+                        max_tokens=16000,
                         system=system,
                         tools=self.toolbox.claude_tools(),
                         messages=messages,
                         output_config={"effort": "medium"},
                         cache_control={"type": "ephemeral"},
-                        # If a safety classifier declines, retry server-side on Anthropic's recommended fallback model.
-                        betas=["server-side-fallback-2026-07-01"],
-                        fallbacks="default",
+                        **fallback_args(MODEL),
                     ) as stream:
                         async for event in stream:
                             if event.type == "text":

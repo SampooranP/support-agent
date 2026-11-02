@@ -1,4 +1,4 @@
-"""Shared helpers for the case generators: a Sonnet client with structured output, cost tracking, YAML I/O."""
+"""Shared helpers for the case generators: a Claude client (GEN_MODEL) with structured output, cost tracking, YAML I/O."""
 
 import asyncio
 from pathlib import Path
@@ -8,16 +8,16 @@ import anthropic
 import yaml
 from pydantic import BaseModel
 
+from agent.models import GEN_MODEL, fallback_args
 from agent.pricing import cost_usd
 from ingestion.config import REPO_ROOT, require_env
 
-GEN_MODEL = "claude-sonnet-5-5"
 GENERATED = REPO_ROOT / "evals" / "generated"
 T = TypeVar("T", bound=BaseModel)
 
 
 class Generator:
-    """Sonnet calls with a concurrency cap and a running cost total."""
+    """Claude calls with a concurrency cap and a running cost total."""
 
     def __init__(self, concurrency: int = 4):
         self.client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
@@ -33,8 +33,7 @@ class Generator:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
                 output_format=schema,
-                betas=["server-side-fallback-2026-07-01"],
-                fallbacks="default",
+                **fallback_args(GEN_MODEL),
             )
         self.calls += 1
         self.cost += cost_usd(response.model, response.usage) or 0
