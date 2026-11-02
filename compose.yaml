@@ -1,0 +1,25 @@
+# The whole stack on one machine: the agent API and the web app, talking over a private network.
+#   docker compose up --build        then open http://localhost:3000
+# Keys come from .env (see .env.example). The two services share AGENT_API_SECRET; set your own in
+# .env, or the default below is used. The database is your Supabase project, as in local development.
+
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      AGENT_API_SECRET: ${AGENT_API_SECRET:-compose-local-secret}
+    ports:
+      - "8000:8000"
+
+  web:
+    build: ./web
+    environment:
+      AGENT_API_URL: http://api:8000
+      AGENT_API_SECRET: ${AGENT_API_SECRET:-compose-local-secret}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy

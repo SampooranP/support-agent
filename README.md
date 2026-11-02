@@ -237,9 +237,19 @@ With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (and `LANGFUSE_BA
 - **Replies:** anyone else's email address or phone number is redacted; a reply that says a refund or email happened when it hasn't is flagged in the logs and traces.
 - **Rate limits:** 10 messages per conversation per 5 minutes, and 40 per customer per hour.
 
+### Docker
+
+[`Dockerfile`](Dockerfile) builds the agent API (with the MCP server it launches), and [`web/Dockerfile`](web/Dockerfile) builds the Next.js app as a standalone Node server. [`compose.yaml`](compose.yaml) runs both, with keys from `.env` and the database in your Supabase project:
+
+```bash
+docker compose up --build   # then open http://localhost:3000
+```
+
+The two services share `AGENT_API_SECRET` (a default is used if `.env` leaves it empty). The API runs one worker, because conversation locks, rate limits and resume scheduling live in its memory. Both images run as a non-root user, and no `.env` file is copied into either.
+
 ### CI
 
-- [`ci.yml`](.github/workflows/ci.yml), on every push and PR: ruff, unit tests ([`tests/`](tests/)), the eval-harness check, and the web app's lint, type check and build. No secrets or paid calls.
+- [`ci.yml`](.github/workflows/ci.yml), on every push and PR: ruff, unit tests ([`tests/`](tests/)), the eval-harness check, the web app's lint, type check and build, and both Docker images (built, then smoke-tested: the API image's imports, and the web image serving pages behind the password). No secrets or paid calls.
 - [`evals.yml`](.github/workflows/evals.yml), on demand ("Run workflow") or when a PR has the `run-evals` label: the grader self-test and the full eval suite, then the scores as a PR comment and the report as a build artifact. It needs these repository secrets: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (optionally the `LANGFUSE_*` keys).
 
 ## Roadmap

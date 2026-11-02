@@ -1,0 +1,9 @@
+# Only requirements.txt, agent/, ingestion/ and mcp-server/ go into the API image.
+**
+!requirements.txt
+!agent
+!ingestion
+!mcp-server
+**/__pycache__
+**/.env
+**/.env.*
