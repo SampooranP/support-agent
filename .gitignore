@@ -19,3 +19,9 @@ dist/
 Thumbs.db
 .vscode/
 .idea/
+
+# Eval output: transcripts and generated reports are rebuilt from results.jsonl
+evals/runs/**/traces/
+evals/runs/report.html
+evals/runs/state.json
+evals/runs/trajectory/

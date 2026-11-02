@@ -6,3 +6,5 @@ mcp>=2.3,<3
 fastapi>=0.162,<1
 uvicorn[standard]>=0.54,<1
 jsonschema>=4.26,<5
+langfuse>=5.1,<6
+pyyaml>=6.0,<7

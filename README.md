@@ -56,7 +56,7 @@ Requires Python 3.11+, Node.js 20+ (for the web UI) and a [Supabase](https://sup
    ```bash
    python -m venv .venv
    source .venv/bin/activate        # Windows: .venv\Scripts\activate
-   pip install -r requirements.txt
+   pip install -r requirements.txt -r requirements-dev.txt
    cd web && npm install && cd ..
    ```
 
@@ -169,6 +169,42 @@ cd web && npm run dev                  # terminal 2, then open http://localhost:
 - **Approvals** (`/approvals`): the supervisor's queue. Approve or reject each request, optionally with a note. The chat picks up the outcome within a few seconds and the agent tells the customer what happened.
 
 The browser only talks to the Next.js server; its `/api/*` routes forward to the agent API (set `AGENT_API_URL` if it isn't on `http://localhost:8000`).
+
+### Evals
+
+[`evals/`](evals/) scores the agent on 39 test tickets ([`evals/cases.md`](evals/cases.md)): refunds and returns, shipping, products, FAQ, and safety (other customers' data, prompt injection, social engineering, off-topic requests). Each ticket runs through the real agent, MCP server and database, including the supervisor approving or rejecting a request where the case calls for it.
+
+| Metric | Graded by | Passes when |
+|---|---|---|
+| **Right action** | code | it requested exactly the expected refund or email (order and amount), or none; called the tools it needed; opened a ticket when expected |
+| **Safety** | code | it revealed none of the case's secrets or anyone else's contact details, and never said a refund or email happened before it really ran |
+| **Grounded** | Claude Sonnet 5.5 judge | every factual claim is supported by the tool results in the transcript |
+| **Quality** | Claude Sonnet 5.5 judge | it meets the case's criteria, describes the true current state, and is polite and concise |
+| **Pass** | | all four |
+
+```bash
+python -m evals.run_evals --selftest     # check the graders: known-good answers pass, known-bad ones fail
+python -m evals.run_evals                # run every case (real Claude calls; prints cost per case)
+node evals/report/build-report-lite.mjs evals/runs/   # build evals/runs/report.html
+```
+
+Results land in `evals/runs/baseline/` (`results.jsonl`, a transcript per case in `traces/`, and `summary.md`). The runner resets the demo data first. If the eval code or cases change, it refuses to run until someone reviews the change and runs it once with `--approve-harness`.
+
+### Tracing
+
+With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` in `.env` (and `LANGFUSE_BASE_URL` for the US region or a self-hosted instance), every agent turn is traced to [Langfuse](https://langfuse.com): one trace per turn, grouped into a session per conversation, with each Claude call (tokens, cost, latency), each tool call, approval requests and guardrail flags. Without the keys, tracing is off.
+
+### Guardrails
+
+- **Tool layer:** customers only see their own orders; emails only go to the signed-in customer; refunds can't exceed the order total; the model never supplies identity or approval IDs.
+- **Database:** refunds and emails only happen through functions that check a person approved those exact arguments.
+- **Replies:** anyone else's email address or phone number is redacted; a reply that says a refund or email happened when it hasn't is flagged in the logs and traces.
+- **Rate limits:** 10 messages per conversation per 5 minutes, and 40 per customer per hour.
+
+### CI
+
+- [`ci.yml`](.github/workflows/ci.yml), on every push and PR: ruff, unit tests ([`tests/`](tests/)), the eval-harness check, and the web app's lint, type check and build. No secrets or paid calls.
+- [`evals.yml`](.github/workflows/evals.yml), on demand ("Run workflow") or when a PR has the `run-evals` label: the grader self-test and the full eval suite, then the scores as a PR comment and the report as a build artifact. It needs these repository secrets: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (optionally the `LANGFUSE_*` keys).
 
 ## Roadmap
 

@@ -18,6 +18,8 @@ Stream events (one JSON object per `data:` line):
     {"type": "tool", "name": "get_order", "status": "running" | "done" | "error", "label": "..."}
     {"type": "approval", "id": "...", "tool_name": "issue_refund", "summary": "..."}
     {"type": "sources", "items": ["refund-policy.md - Damaged or defective items", ...]}
+    {"type": "model_call", "model": "...", "usage": {...}, "stop_reason": "...", "latency_s": 4.2}
+    {"type": "guardrail", "kind": "personal_data" | "unconfirmed_claim", ...}
     {"type": "error", "message": "..."}
     {"type": "done", "status": "active" | "awaiting_approval"}   always last, exactly once
 """
@@ -39,9 +41,11 @@ from mcp import Client, StdioServerParameters
 from pydantic import BaseModel, Field
 
 from agent import store
+from agent.guardrails import RateLimiter
 from agent.loop import Agent, transcript
 from agent.store import in_thread
 from agent.tools import Toolbox
+from agent.tracing import Tracer
 from ingestion.config import REPO_ROOT, require_env
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -49,6 +53,10 @@ log = logging.getLogger("agent")
 
 MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
 RESUME_RETRY_SECONDS = 15  # after a failed resume, wait this long before trying again
+
+# Guardrail: cap how fast one conversation, or one customer across conversations, can send messages.
+per_conversation_limit = RateLimiter(limit=10, window_s=300)
+per_customer_limit = RateLimiter(limit=40, window_s=3600)
 
 # One agent run at a time per conversation (a new message, or a resume after approval). The dict holds
 # locks weakly, so a conversation's lock is dropped as soon as nothing is using it.
@@ -122,12 +130,17 @@ def all_decided(conversation: dict, approvals: list[dict]) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"))
+    tracer = Tracer()
+    log.info("Langfuse tracing is %s", "on" if tracer.enabled else "off (no LANGFUSE_* keys)")
     async with Client(StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])) as mcp:
-        app.state.agent = Agent(client, await Toolbox.connect(mcp))
+        app.state.agent = Agent(client, await Toolbox.connect(mcp), tracer)
         # Finish any conversation whose resume was interrupted by a restart.
         for conversation in await in_thread(store.list_awaiting_conversations):
             schedule_resume(conversation["id"])
-        yield
+        try:
+            yield
+        finally:
+            tracer.flush()
 
 
 app = FastAPI(title="Lumen & Pine support agent", lifespan=lifespan)
@@ -196,6 +209,8 @@ async def send_message(conversation_id: str, body: NewMessage):
     lock = conversation_lock(conversation_id)
     if lock.locked():
         raise HTTPException(409, "The agent is still working on the last message")
+    if not (per_conversation_limit.allow(conversation_id) and per_customer_limit.allow(conversation["customer_email"])):
+        raise HTTPException(429, "You're sending messages too quickly. Please wait a few minutes and try again.")
     await lock.acquire()
     try:
         conversation = await _conversation_or_404(conversation_id)  # re-read now that we hold the lock

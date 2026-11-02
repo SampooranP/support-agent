@@ -7,7 +7,7 @@ calls them through anyio.to_thread.
 import functools
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 import anyio
@@ -42,7 +42,7 @@ def _db():
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _is_uuid(value: str) -> bool:
@@ -55,7 +55,7 @@ def _is_uuid(value: str) -> bool:
 
 @_retry_once
 def get_customer_by_email(email: str) -> dict | None:
-    rows = _db().table("customers").select("id, name, email").eq("email", email.strip().lower()).execute().data
+    rows = _db().table("customers").select("id, name, email, phone").eq("email", email.strip().lower()).execute().data
     return rows[0] if rows else None
 
 
