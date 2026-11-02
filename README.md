@@ -70,6 +70,7 @@ Requires Python 3.11+, Node.js 20+ (for the web UI) and a [Supabase](https://sup
    | [`supabase/migrations/20261102000000_customers_orders.sql`](supabase/migrations/20261102000000_customers_orders.sql) | Creates the `customers`, `orders` and `order_items` tables |
    | [`supabase/migrations/20261103000000_doc_chunks_rpcs.sql`](supabase/migrations/20261103000000_doc_chunks_rpcs.sql) | Adds `replace_doc_chunks` (re-ingests a document in one transaction) and `doc_chunk_sources` |
    | [`supabase/migrations/20261104000000_support_actions.sql`](supabase/migrations/20261104000000_support_actions.sql) | Creates `conversations`, `approval_requests`, `tickets`, `refunds` and `emails`, plus `execute_refund` / `execute_email`, the only way a refund or email is written (each re-checks that a human approved those exact arguments) |
+   | [`supabase/migrations/20261105000000_conversation_specialist.sql`](supabase/migrations/20261105000000_conversation_specialist.sql) | Adds the `specialist` column: which specialist a conversation is routed to |
    | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. The function wipes and reloads those tables, which keeps the order dates fresh; the smoke test calls it before each run. It refuses to run if the tables hold anything other than the demo records. Development only. |
 
    Every table has row-level security on with no policies, so only the service-role key (used by the backend) can access it.
@@ -153,6 +154,13 @@ python -m agent.resilience_test        # failure handling with injected errors (
 ```
 
 The scenarios reset the demo data, then check that a damaged-item refund pauses for approval, that a rejection is reported and nothing is refunded, that an approval creates exactly one refund, that another customer's order isn't revealed, and that a Final Sale item gets no refund. The resilience tests inject failures (a crashing tool, a resume that dies mid-refund, an unavailable Claude API) and check that conversations stay usable, a retried resume never refunds twice, and errors reach the client exactly once.
+
+**Routing.** Before each reply, a small Haiku call ([`agent/router.py`](agent/router.py)) hands the conversation to one of four specialists ([`agent/specialists.py`](agent/specialists.py)): billing (refunds, returns, cancellations, charges), shipping, tech support, or general. It stays with the current specialist unless the topic clearly changes. Only billing can refund; tech support and general can't email. Every specialist shares one system prompt and tool list, so the cached prompt prefix never changes. A switch appends a note to the conversation instead, and the loop enforces each specialist's tools. The chat shows which specialist is answering.
+
+```bash
+python -m evals.route_eval              # routing accuracy on the core cases (about 20 Haiku calls)
+python -m evals.route_eval --extended   # plus the generated cases (about 230 calls)
+```
 
 > **No authentication yet:** the demo signs in by picking a customer, and the approval endpoints are open. Fine on localhost; authentication comes before deployment.
 
@@ -268,3 +276,16 @@ What the failures found:
 | Quality | 65% | 65% |
 
 Fixed: the uncharged-order refund, the refund and email requested together, the cancellation reply, and the grader false positive. Still failing: in single-message conversations the agent still requests a refund without writing to the customer first (4 cases). The chat UI covers this: while a request waits for review it tells the customer a supervisor is reviewing it. The eval grades only the agent's own words, so these cases still fail. The judge also marks down one reply split into pieces by its citations. Twenty cases is a small sample: the change in pass rate is within noise.
+
+**v2** ([change](evals/runs/v2/change.md)): a router hands each conversation to a billing, shipping, tech-support or general specialist, each limited to its own tools. On the 20 core cases:
+
+| Metric | v1 | v2 |
+|---|---|---|
+| **Pass** | 65% | **75%** (53-89%) |
+| Right action | 100% | 100% |
+| Safety | 100% | 100% |
+| Grounded | 100% | 95% |
+| Quality | 65% | 75% |
+| Cost per conversation (median, agent + judge) | $0.042 | $0.045 (includes the router) |
+
+The router sent every case to an acceptable specialist: 225 of 225 across the core cases, 94 rewordings, 104 policy-grid cases and the 7 kept attacks. Three of the five failures are the silent pause described above. `cancelled-order-charge` regressed: the agent didn't say that cards are only charged when an order ships. On cheaper Haiku runs (two per case), right action rose from 72% to 93%. Like v1's gain, the pass-rate change is within noise.

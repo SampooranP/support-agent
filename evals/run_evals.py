@@ -203,6 +203,7 @@ async def run_case(agent: Agent, case: dict) -> dict:
 
     collectors = turns + ([followup] if followup else [])
     calls = [e for c in collectors for e in c.of("model_call")]
+    routes = [e for c in collectors for e in c.of("route")]  # the router runs on its own model
     errors = [e["message"] for c in collectors for e in c.of("error")]
     refused = any(call["stop_reason"] == "refusal" for call in calls)
     if errors and not refused:
@@ -235,12 +236,13 @@ async def run_case(agent: Agent, case: dict) -> dict:
     )
     tools = [f"{t['name']}: {t['description']}" for t in agent.toolbox.claude_tools()]
     return {"conversation": conversation, "customer": customer, "outcome": outcome, "calls": calls,
-            "refused": refused, "approvals": approvals, "tools": tools}
+            "refused": refused, "approvals": approvals, "tools": tools, "routes": routes}
 
 
 def build_trace(conversation: dict, customer: dict, approvals: list[dict]) -> list[dict]:
     """The conversation in the report's trace format: system, user, assistant, tool_call, tool_result."""
-    trace = [{"role": "system", "content": system_prompt(customer["name"], customer["email"])}]
+    trace = [{"role": "system", "content": system_prompt(customer["name"], customer["email"],
+                                                         conversation["created_at"][:10])}]
     answered = set()
     for message in conversation["messages"]:
         content = message["content"]
@@ -312,6 +314,7 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
     grade = {"pass": float(all(grade.values())), **grade}
     agent_usage = sum_usage(calls)
     agent_cost = sum(cost_usd(call["model"], call["usage"]) or 0 for call in calls)
+    agent_cost += sum(cost_usd(r["model"], r["usage"]) or 0 for r in result["routes"] if r["model"])
     judge_cost = cost_usd(judge_response.model, judge_response.usage) or 0
     row = {
         "prompt_id": case["id"],
@@ -344,6 +347,7 @@ async def grade_and_write(case: dict, rep: int, result: dict, judge_client, out:
             "judge_cost_usd": round(judge_cost, 5),
             "approvals": [a["summary"] for a in outcome.approvals],
             "tickets": [t["ticket_number"] for t in outcome.tickets],
+            "routes": [r["specialist"] for r in result["routes"]],  # one per customer message
         },
     }
     return row

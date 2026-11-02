@@ -1,14 +1,15 @@
 """System prompt for the support agent.
 
 The prompt is two blocks: the instructions, which are the same for every conversation, then the
-signed-in customer and today's date. A cache breakpoint sits on the first block, so the tools and
+signed-in customer and the date. A cache breakpoint sits on the first block, so the tools and
 instructions are one cached prefix shared by every customer's conversations; only the short
 second block and the conversation itself differ.
+
+The prompt must stay byte-identical for a conversation's whole life (see agent/specialists.py),
+so the date is the day the conversation started, not today's.
 """
 
-from datetime import date
-
-INSTRUCTIONS = """You are the customer support agent for Lumen & Pine, an online store for outdoor gear and home goods. You're chatting with the signed-in customer named below.
+INSTRUCTIONS = """You are the customer support agent for Lumen & Pine, an online store for outdoor gear and home goods. You're chatting with the signed-in customer named below. Notes in the conversation tell you which specialist you are (billing, shipping, tech support or general) and which tools you can use.
 
 How to work:
 - Look things up before answering. Use search_knowledge_base for any question about policies, shipping, products, or troubleshooting, and cite what you find. Use get_order and get_customer for anything about the customer's orders. Don't state a policy, price, date, order detail, or general advice (such as how carriers or products usually behave) that you haven't looked up.
@@ -31,14 +32,15 @@ CUSTOMER_TEMPLATE = """Signed-in customer:
 - Today's date: {today}"""
 
 
-def system_blocks(name: str, email: str) -> list[dict]:
-    """The system prompt as API content blocks, with the shared instructions cached."""
+def system_blocks(name: str, email: str, today: str) -> list[dict]:
+    """The system prompt as API content blocks, with the shared instructions cached.
+    today: the conversation's start date (YYYY-MM-DD)."""
     return [
         {"type": "text", "text": INSTRUCTIONS, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": CUSTOMER_TEMPLATE.format(name=name, email=email, today=date.today().isoformat())},
+        {"type": "text", "text": CUSTOMER_TEMPLATE.format(name=name, email=email, today=today)},
     ]
 
 
-def system_prompt(name: str, email: str) -> str:
+def system_prompt(name: str, email: str, today: str) -> str:
     """The same prompt as plain text, for transcripts."""
-    return "\n\n".join(block["text"] for block in system_blocks(name, email))
+    return "\n\n".join(block["text"] for block in system_blocks(name, email, today))

@@ -6,7 +6,7 @@ Run from the repo root:
 Endpoints:
     GET  /customers                      demo customers to sign in as
     POST /conversations                  start a conversation for a customer
-    GET  /conversations/{id}             transcript, status and approvals
+    GET  /conversations/{id}             transcript, status, specialist and approvals
     POST /conversations/{id}/messages    send a message; the reply streams as server-sent events
     GET  /approvals?status=pending       approval queue (status: one or more, comma-separated; empty = all)
     POST /approvals/{id}/decision        approve or reject; the conversation then resumes
@@ -16,6 +16,7 @@ Stream events (one JSON object per `data:` line):
     {"type": "text", "delta": "..."}
     {"type": "retry"}                    discard the text streamed since the last "status"
     {"type": "tool", "name": "get_order", "status": "running" | "done" | "error", "label": "..."}
+    {"type": "route", "specialist": "billing", "title": "Billing", "changed": true, "model": "...", "usage": {...}}
     {"type": "approval", "id": "...", "tool_name": "issue_refund", "summary": "..."}
     {"type": "sources", "items": ["refund-policy.md - Damaged or defective items", ...]}
     {"type": "model_call", "model": "...", "usage": {...}, "stop_reason": "...", "latency_s": 4.2}
@@ -197,6 +198,7 @@ async def get_conversation(conversation_id: str):
     return {
         "id": conversation["id"],
         "status": conversation["status"],
+        "specialist": conversation.get("specialist"),
         "customer": customer,
         "items": transcript(conversation, approvals),
         "approvals": approvals,

@@ -87,6 +87,7 @@ def save_conversation(conversation: dict) -> None:
         "messages": conversation["messages"],
         "status": conversation["status"],
         "pending_turn": conversation["pending_turn"],
+        "specialist": conversation.get("specialist"),
         "updated_at": _now(),
     }).eq("id", conversation["id"]).execute()
 

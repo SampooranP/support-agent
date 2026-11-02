@@ -1,0 +1,1 @@
+{"prompt_id": "decision-reject-refund", "rep": 0, "kind": "tool_error", "message": "1 tool call(s) failed with an internal error", "model": "claude-opus-5-5", "usage": {"input_tokens": 10, "output_tokens": 1082, "cache_read_input_tokens": 19005, "cache_creation_input_tokens": 4631}, "cost_usd": 0.04864}
