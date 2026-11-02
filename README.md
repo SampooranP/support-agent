@@ -16,7 +16,7 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 
 ## Features
 
-- **RAG over documents**: ingestion pipeline (load → chunk → embed → store) with pgvector search and reranking
+- **RAG over documents**: ingestion pipeline (load → chunk → embed → store) with pgvector similarity search
 - **MCP server**: `get_order`, `get_customer`, `create_ticket`, `issue_refund`, `send_email`
 - **Human-in-the-loop**: approve/reject dashboard for risky tool calls
 - **Evals**: test tickets scored on correct action, grounding, answer quality (LLM-as-judge) and safety
@@ -27,13 +27,13 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 
 | Layer | Choice |
 |---|---|
-| Agent | Claude Agent SDK / LangGraph |
+| Agent | Hand-written agent loop on the Anthropic Python SDK, with a Haiku router and four specialists |
 | Models | Anthropic Claude |
 | Database & vectors | Supabase Postgres + pgvector |
 | Tools | Custom MCP server |
 | Frontend | Next.js + Vercel AI SDK |
 | Tracing | Langfuse |
-| DevOps | Docker, GitHub Actions (evals on every PR), AWS |
+| DevOps | Docker, GitHub Actions (lint and tests on every PR; evals on demand), AWS |
 
 ## Repository layout
 
@@ -71,6 +71,7 @@ Requires Python 3.11+, Node.js 20+ (for the web UI) and a [Supabase](https://sup
    | [`supabase/migrations/20261103000000_doc_chunks_rpcs.sql`](supabase/migrations/20261103000000_doc_chunks_rpcs.sql) | Adds `replace_doc_chunks` (re-ingests a document in one transaction) and `doc_chunk_sources` |
    | [`supabase/migrations/20261104000000_support_actions.sql`](supabase/migrations/20261104000000_support_actions.sql) | Creates `conversations`, `approval_requests`, `tickets`, `refunds` and `emails`, plus `execute_refund` / `execute_email`, the only way a refund or email is written (each re-checks that a human approved those exact arguments) |
    | [`supabase/migrations/20261105000000_conversation_specialist.sql`](supabase/migrations/20261105000000_conversation_specialist.sql) | Adds the `specialist` column: which specialist a conversation is routed to |
+   | [`supabase/migrations/20261106000000_daily_spend.sql`](supabase/migrations/20261106000000_daily_spend.sql) | Creates `daily_spend` and `add_spend`, which keep the agent API's Claude spend per day for the daily cap |
    | [`supabase/seed.sql`](supabase/seed.sql) | Creates `reset_demo_data()` and runs it to load 5 sample customers and 8 orders. The function wipes and reloads those tables, which keeps the order dates fresh; the smoke test calls it before each run. It refuses to run if the tables hold anything other than the demo records. Development only. |
 
    Every table has row-level security on with no policies, so only the service-role key (used by the backend) can access it.
@@ -162,7 +163,15 @@ python -m evals.route_eval              # routing accuracy on the core cases (ab
 python -m evals.route_eval --extended   # plus the generated cases (about 230 calls)
 ```
 
-> **No authentication yet:** the demo signs in by picking a customer, and the approval endpoints are open. Fine on localhost; authentication comes before deployment.
+**Running it online.** Three settings, all off by default for local development:
+
+| Setting | Where | What it does |
+|---|---|---|
+| `DEMO_PASSWORD` | web | Puts every page and `/api` route behind a password ([`web/src/proxy.ts`](web/src/proxy.ts)). Signing in sets an HTTP-only cookie for 7 days. |
+| `AGENT_API_SECRET` | both | The agent API refuses any request without this value in `X-Agent-Secret` (except `GET /health`); the web server adds it. Only the web server calls the API, so it has no CORS. |
+| `DAILY_SPEND_CAP_USD` | agent API | Every Claude call the API makes is added to today's total in `daily_spend`; once it reaches the cap (default $5), new messages get a "try again tomorrow" reply. |
+
+Inside the demo, customers are still picked from a list rather than signing in, and anyone with the password can use the approvals page: it's a demo of the flow, not real accounts. The public demo runs `AGENT_MODEL=claude-sonnet-5-5` with the Haiku router.
 
 ### Chat UI and approvals dashboard
 
