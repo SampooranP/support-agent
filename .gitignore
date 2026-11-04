@@ -27,3 +27,11 @@ evals/runs/state.json
 evals/runs/trajectory/
 
 evals/runs/dev/
+
+# Terraform: state stays on the machine that applies it (see infra/README.md)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.tfstate.lock.info

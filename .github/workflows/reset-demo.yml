@@ -1,0 +1,30 @@
+# Every night, wipe the public demo's conversations, approvals, tickets, refunds and emails, and reload the
+# demo customers and orders (reset_demo_data in supabase/seed.sql), so dates stay fresh and visitors start clean.
+# Runs against the demo's own Supabase project, never the development one. Needs the DEMO_SUPABASE_URL and
+# DEMO_SUPABASE_SERVICE_ROLE_KEY repository secrets; without them it does nothing.
+name: Reset demo data
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reset_demo_data()
+        env:
+          URL: ${{ secrets.DEMO_SUPABASE_URL }}
+          KEY: ${{ secrets.DEMO_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "DEMO_SUPABASE_URL or DEMO_SUPABASE_SERVICE_ROLE_KEY isn't set; skipping."
+            exit 0
+          fi
+          curl --fail-with-body -sS -X POST "$URL/rest/v1/rpc/reset_demo_data" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}'
+          echo "Demo data reset."

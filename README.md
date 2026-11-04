@@ -33,7 +33,7 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 | Tools | Custom MCP server |
 | Frontend | Next.js + Vercel AI SDK |
 | Tracing | Langfuse |
-| DevOps | Docker, GitHub Actions (lint and tests on every PR; evals on demand), AWS |
+| DevOps | Docker, GitHub Actions (lint, tests and image builds on every PR; evals on demand), Terraform, AWS ECS Fargate + ALB, Vercel |
 
 ## Repository layout
 
@@ -45,6 +45,7 @@ web/          chat UI + approvals dashboard
 evals/        test tickets, scoring scripts, results
 docs/         sample company knowledge base
 supabase/     database migrations
+infra/        Terraform for AWS (ECR, Secrets Manager, OIDC deploy role, VPC, ALB, ECS Fargate)
 ```
 
 ## Setup
@@ -246,6 +247,10 @@ docker compose up --build   # then open http://localhost:3000
 ```
 
 The two services share `AGENT_API_SECRET` (a default is used if `.env` leaves it empty). The API runs one worker, because conversation locks, rate limits and resume scheduling live in its memory. Both images run as a non-root user, and no `.env` file is copied into either.
+
+### Deployment
+
+The public demo runs the web app on Vercel and the agent API on AWS ECS Fargate, behind an HTTPS load balancer, using a separate Supabase project. [`infra/README.md`](infra/README.md) has the Terraform and the runbook. The cheap, long-lived part (image registry, keys, deploy role) stays up. The part that costs money (load balancer and task) is brought up for demos and destroyed afterwards. Pushes to `main` redeploy the API through GitHub's OIDC (no AWS keys in GitHub), and the demo data resets every night.
 
 ### CI
 

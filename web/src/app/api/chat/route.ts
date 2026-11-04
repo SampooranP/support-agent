@@ -3,6 +3,9 @@ import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { agentFetch, jsonInit, readEvents } from "@/lib/agent-api";
 import type { ConversationStatus, SupportUIMessage, ToolStep } from "@/lib/types";
 
+// A reply streams for as long as the agent works (several model and tool calls); allow up to 5 minutes on Vercel.
+export const maxDuration = 300;
+
 // Events from the Python agent API (see agent/api.py).
 type AgentEvent =
   | { type: "status"; text: string }

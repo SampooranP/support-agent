@@ -1,0 +1,56 @@
+# Build the agent API image, push it to ECR, and redeploy the ECS service if infra/app is up.
+# Needs the AWS_DEPLOY_ROLE_ARN repository variable (an output of infra/base); without it the job is skipped.
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths: [agent/**, ingestion/**, mcp-server/**, requirements.txt, Dockerfile, .dockerignore]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # to assume the deploy role through GitHub's OIDC provider
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  NAME: support-agent
+
+jobs:
+  deploy:
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.NAME }}-api:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.NAME }}-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Redeploy if the service is up
+        run: |
+          status=$(aws ecs describe-services --cluster "$NAME" --services "$NAME-api" \
+            --query 'services[0].status' --output text 2>/dev/null || echo NONE)
+          if [ "$status" != ACTIVE ]; then
+            echo "infra/app isn't up, so the image was pushed only. It runs on the next terraform apply."
+            exit 0
+          fi
+          aws ecs update-service --cluster "$NAME" --service "$NAME-api" --force-new-deployment > /dev/null
+          aws ecs wait services-stable --cluster "$NAME" --services "$NAME-api"
+          echo "Deployed ${{ github.sha }}"
