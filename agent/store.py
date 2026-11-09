@@ -133,6 +133,18 @@ def list_approvals(
 
 
 @_retry_once
+def list_tickets(limit: int = 100) -> list[dict]:
+    """Support tickets, newest first, each with its customer's name and email."""
+    # Only what the page shows: a conversation_id would let any visitor open that customer's transcript.
+    columns = "ticket_number, order_number, subject, description, priority, status, created_at, customers(name, email)"
+    rows = _db().table("tickets").select(columns).order("ticket_number", desc=True).limit(limit).execute().data
+    for row in rows:
+        customer = row.pop("customers") or {}
+        row["customer_name"], row["customer_email"] = customer.get("name"), customer.get("email")
+    return rows
+
+
+@_retry_once
 def decide_approval(approval_id: str, approved: bool, reviewer: str, note: str | None) -> dict | None:
     """Move a pending approval to approved/rejected. Returns None if it wasn't pending (already decided)."""
     rows = (

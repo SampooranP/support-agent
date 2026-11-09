@@ -41,7 +41,7 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 ingestion/    load, chunk, embed docs → pgvector
 mcp-server/   order, customer, ticket, refund and email tools
 agent/        agent loop, prompts, approval logic, memory
-web/          chat UI + approvals dashboard
+web/          chat UI + approvals dashboard + tickets list
 evals/        test tickets, scoring scripts, results
 docs/         sample company knowledge base
 supabase/     database migrations
@@ -172,7 +172,7 @@ python -m evals.route_eval --extended   # plus the generated cases (about 230 ca
 | `AGENT_API_SECRET` | both | The agent API refuses any request without this value in `X-Agent-Secret` (except `GET /health`); the web server adds it. Only the web server calls the API, so it has no CORS. |
 | `DAILY_SPEND_CAP_USD` | agent API | Every Claude call the API makes is added to today's total in `daily_spend`; once it reaches the cap (default $5), new messages get a "try again tomorrow" reply. |
 
-Inside the demo, customers are still picked from a list rather than signing in, and anyone with the password can use the approvals page: it's a demo of the flow, not real accounts. The public demo runs `AGENT_MODEL=claude-sonnet-5-5` with the Haiku router.
+Inside the demo, customers are still picked from a list rather than signing in, and anyone with the password can use the approvals and tickets pages: it's a demo of the flow, not real accounts. The public demo runs `AGENT_MODEL=claude-sonnet-5-5` with the Haiku router.
 
 ### Chat UI and approvals dashboard
 
@@ -185,6 +185,7 @@ cd web && npm run dev                  # terminal 2, then open http://localhost:
 
 - **Chat** (`/`): pick a demo customer and ask a question, such as Maya's "My order #1042 arrived with two snapped tent poles. Can I get a refund?" Replies stream in with tool steps, cited sources, and an approval card when the agent asks to refund or email.
 - **Approvals** (`/approvals`): the supervisor's queue. Approve or reject each request, optionally with a note. The chat picks up the outcome within a few seconds and the agent tells the customer what happened.
+- **Tickets** (`/tickets`): the follow-ups the agent has opened for the support team. Tickets don't need approval, so they're created straight away.
 
 The browser only talks to the Next.js server; its `/api/*` routes forward to the agent API (set `AGENT_API_URL` if it isn't on `http://localhost:8000`).
 

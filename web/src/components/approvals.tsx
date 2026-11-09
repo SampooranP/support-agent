@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 
 import { detailMessage } from "@/lib/errors";
+import { timeAgo } from "@/lib/time";
 import type { ApprovalRequest } from "@/lib/types";
+import { usePolling } from "@/lib/use-polling";
 
 const POLL_MS = 3000;
 const REVIEWER_KEY = "reviewer-name";
@@ -33,10 +35,10 @@ export function Approvals() {
         fetch("/api/approvals?status=pending"),
         fetch("/api/approvals?status=approved,executed,rejected,failed&limit=10"),
       ]);
-      const [pendingBody, decidedBody] = await Promise.all([p.json(), decided.json()]);
-      if (!p.ok) throw new Error(detailMessage(pendingBody, "Couldn't load approvals"));
+      const [pendingBody, decidedBody] = await Promise.all([p.json().catch(() => null), decided.json().catch(() => null)]);
+      if (!p.ok || !Array.isArray(pendingBody)) throw new Error(detailMessage(pendingBody, "Couldn't load approvals"));
       setPending(pendingBody);
-      if (decided.ok) setRecent(decidedBody);
+      if (decided.ok && Array.isArray(decidedBody)) setRecent(decidedBody);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -45,14 +47,7 @@ export function Approvals() {
     }
   }, []);
 
-  useEffect(() => {
-    const first = setTimeout(load, 0);
-    const timer = setInterval(load, POLL_MS);
-    return () => {
-      clearTimeout(first);
-      clearInterval(timer);
-    };
-  }, [load]);
+  usePolling(load, POLL_MS);
 
   function updateReviewer(name: string) {
     setEditedReviewer(name);
@@ -238,12 +233,4 @@ function StatusBadge({ status }: { status: ApprovalRequest["status"] }) {
     pending: "bg-warn-soft text-warn",
   };
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>{status}</span>;
-}
-
-function timeAgo(iso: string): string {
-  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
 }
