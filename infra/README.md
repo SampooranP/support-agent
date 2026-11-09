@@ -28,7 +28,7 @@ App Runner was the first choice, but it stopped accepting new customers on 30 Ap
 - Terraform 1.10 or later
 - The AWS CLI, signed in to the account (`aws configure` or SSO)
 - A Route 53 public hosted zone for your domain in that account
-- A second Supabase project for the demo, in eu-west-1. In its SQL Editor, run every file in `supabase/migrations/` and then `supabase/seed.sql`, in the order the main README lists.
+- A second Supabase project for the demo, in us-east-1 (the same region as the AWS stacks). In its SQL Editor, run every file in `supabase/migrations/` and then `supabase/seed.sql`, in the order the main README lists.
 - The knowledge base ingested into it: run `python -m ingestion.ingest` with the demo project's `SUPABASE_URL` and key set in your shell.
 
 ## First time
@@ -49,7 +49,7 @@ rm api-secret.json
 ```
 
 3. In GitHub, go to **Settings → Secrets and variables → Actions**:
-   - Under **Variables**, add `AWS_DEPLOY_ROLE_ARN` (the `github_deploy_role_arn` output) and `AWS_REGION` (`eu-west-1`).
+   - Under **Variables**, add `AWS_DEPLOY_ROLE_ARN` (the `github_deploy_role_arn` output) and `AWS_REGION` (`us-east-1`).
    - Under **Secrets**, add `DEMO_SUPABASE_URL` and `DEMO_SUPABASE_SERVICE_ROLE_KEY`, for the nightly reset.
 4. Push the first image: **Actions → Deploy API → Run workflow**. With `infra/app` not up yet, it only pushes the image.
 
