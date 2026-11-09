@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region. eu-west-1 is next to the Supabase project, which every agent turn calls several times."
+  description = "AWS region. us-east-1 is next to the demo Supabase project, which every agent turn calls several times."
   type        = string
-  default     = "eu-west-1"
+  default     = "us-east-1"
 }
 
 variable "name" {
@@ -11,9 +11,9 @@ variable "name" {
 }
 
 variable "github_repo" {
-  description = "The GitHub repository (owner/name) whose main branch may push images and redeploy."
+  description = "The repository whose main branch may push images and redeploy, as GitHub's OIDC token names it: owner@owner_id/name@repo_id (see repos/<owner>/<repo>/actions/oidc/customization/sub)."
   type        = string
-  default     = "SampooranP/support-agent"
+  default     = "SampooranP@98943576/support-agent@1441825424"
 }
 
 variable "create_github_oidc_provider" {
