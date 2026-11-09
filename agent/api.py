@@ -14,6 +14,7 @@ Endpoints:
     POST /conversations/{id}/messages    send a message; the reply streams as server-sent events
     GET  /approvals?status=pending       approval queue (status: one or more, comma-separated; empty = all)
     POST /approvals/{id}/decision        approve or reject; the conversation then resumes
+    GET  /tickets                        support tickets the agent opened, newest first
 
 Stream events (one JSON object per `data:` line):
     {"type": "status", "text": "Thinking"}
@@ -276,6 +277,11 @@ async def send_message(conversation_id: str, body: NewMessage):
 async def approvals(status: str = "pending", limit: int = Query(200, ge=1, le=200)):
     statuses = [s.strip() for s in status.split(",") if s.strip()] or None
     return await in_thread(store.list_approvals, statuses, None, limit)
+
+
+@app.get("/tickets")
+async def tickets(limit: int = Query(100, ge=1, le=200)):
+    return await in_thread(store.list_tickets, limit)
 
 
 @app.post("/approvals/{approval_id}/decision")

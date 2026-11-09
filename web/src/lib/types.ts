@@ -58,6 +58,18 @@ export type Conversation = {
   items: TranscriptItem[];
 };
 
+export type Ticket = {
+  ticket_number: number;
+  order_number: number | null;
+  subject: string;
+  description: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: "open" | "pending" | "resolved";
+  created_at: string;
+  customer_name: string | null;
+  customer_email: string | null;
+};
+
 export type ApprovalRequest = {
   id: string;
   conversation_id: string;
