@@ -18,6 +18,15 @@ def test_other_endpoints_need_the_secret(monkeypatch):
     assert client.get("/approvals", headers={"x-agent-secret": "wrong"}).status_code == 401
 
 
+def test_mcp_server_is_given_the_database_settings(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    assert api.mcp_server_params().env == {
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "test-key",
+    }
+
+
 def test_every_reported_claude_call_is_added_to_todays_spend(monkeypatch):
     added, seen = [], []
     monkeypatch.setattr(spend, "add", added.append)

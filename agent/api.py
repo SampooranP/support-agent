@@ -138,6 +138,13 @@ def all_decided(conversation: dict, approvals: list[dict]) -> bool:
     )
 
 
+def mcp_server_params() -> StdioServerParameters:
+    """The MCP client gives a server process only a few safe variables like PATH, so pass the ones it needs.
+    Locally the server would also find them in .env, but the container has no .env."""
+    env = {name: require_env(name) for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")}
+    return StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)], env=env)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"))
@@ -145,7 +152,7 @@ async def lifespan(app: FastAPI):
     if not API_SECRET:
         log.warning("AGENT_API_SECRET isn't set: the API accepts requests from anyone who can reach it")
     log.info("Langfuse tracing is %s", "on" if tracer.enabled else "off (no LANGFUSE_* keys)")
-    async with Client(StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])) as mcp:
+    async with Client(mcp_server_params()) as mcp:
         app.state.agent = Agent(client, await Toolbox.connect(mcp), tracer)
         # Finish any conversation whose resume was interrupted by a restart.
         for conversation in await in_thread(store.list_awaiting_conversations):
