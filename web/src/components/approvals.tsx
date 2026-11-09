@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useSyncExternalStore } from "react";
 
+import { Badge, Banner, EmptyState, PageHeader, SkeletonRows, type Tone } from "@/components/ui";
 import { detailMessage } from "@/lib/errors";
 import { timeAgo } from "@/lib/time";
 import type { ApprovalRequest } from "@/lib/types";
@@ -59,34 +60,27 @@ export function Approvals() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Approvals</h1>
-          <p className="text-sm text-muted">Refunds and emails the agent wants to send. Nothing happens until you approve.</p>
-        </div>
+    <div className="mx-auto w-full max-w-5xl px-4 py-8 md:px-6">
+      <PageHeader title="Approvals" description="Refunds and emails the agent wants to send. Nothing happens until you approve.">
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted">Reviewing as</span>
-          <input
-            value={reviewer}
-            onChange={(e) => updateReviewer(e.target.value)}
-            placeholder="Your name"
-            className="rounded-md border border-line bg-surface px-2 py-1.5"
-          />
+          <span className="whitespace-nowrap text-muted">Reviewing as</span>
+          <input value={reviewer} onChange={(e) => updateReviewer(e.target.value)} placeholder="Your name" className="field w-44!" />
         </label>
-      </div>
+      </PageHeader>
 
-      {error && <p className="mt-4 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p>}
+      {error && (
+        <div className="mt-4">
+          <Banner tone="danger">{error}</Banner>
+        </div>
+      )}
 
-      <section className="mt-6">
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-          Pending {pending.length > 0 && `(${pending.length})`}
+      <section className="mt-8">
+        <h2 className="mb-3 flex items-center gap-2 font-semibold">
+          Waiting for review
+          {pending.length > 0 && <Badge tone="warn">{pending.length}</Badge>}
         </h2>
-        {loaded && pending.length === 0 && !error && (
-          <p className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-            Nothing waiting for review. Ask for a refund in the chat to see one appear here.
-          </p>
-        )}
+        {!loaded && <SkeletonRows count={2} className="h-40" />}
+        {loaded && pending.length === 0 && !error && <EmptyState>Nothing waiting for review. Ask for a refund in the chat to see one appear here.</EmptyState>}
         <div className="grid gap-4 md:grid-cols-2">
           {pending.map((a) => (
             <PendingCard key={a.id} approval={a} reviewer={reviewer} onDecided={load} />
@@ -96,29 +90,29 @@ export function Approvals() {
 
       {recent.length > 0 && (
         <section className="mt-10">
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">Recently decided</h2>
-          <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-            <table className="w-full text-left text-sm">
+          <h2 className="mb-3 font-semibold">Recently decided</h2>
+          <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+            <table className="w-full min-w-[560px] text-left text-sm">
               <thead className="border-b border-line text-muted">
                 <tr>
-                  <th className="px-4 py-2 font-medium">Request</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium">Reviewer</th>
-                  <th className="px-4 py-2 font-medium">Decided</th>
+                  <th className="px-4 py-2.5 font-medium">Request</th>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Reviewer</th>
+                  <th className="px-4 py-2.5 font-medium">Decided</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-line">
                 {recent.map((a) => (
-                  <tr key={a.id} className="border-b border-line last:border-0">
-                    <td className="max-w-md px-4 py-2">
+                  <tr key={a.id}>
+                    <td className="max-w-md px-4 py-3">
                       <span className="line-clamp-2">{a.summary}</span>
-                      {a.reviewer_note && <span className="block text-xs text-muted">Note: {a.reviewer_note}</span>}
+                      {a.reviewer_note && <span className="mt-0.5 block text-xs text-muted">Note: {a.reviewer_note}</span>}
                     </td>
-                    <td className="px-4 py-2">
-                      <StatusBadge status={a.status} />
+                    <td className="px-4 py-3">
+                      <Badge tone={STATUS_TONES[a.status]}>{a.status}</Badge>
                     </td>
-                    <td className="px-4 py-2 text-muted">{a.reviewer ?? "-"}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-muted">{a.decided_at ? timeAgo(a.decided_at) : "-"}</td>
+                    <td className="px-4 py-3 text-muted">{a.reviewer ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-muted">{a.decided_at ? timeAgo(a.decided_at) : "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -165,58 +159,51 @@ function PendingCard({
   }
 
   return (
-    <article className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-medium">{approval.tool_name === "issue_refund" ? "Refund request" : "Email request"}</h3>
-        <span className="whitespace-nowrap text-xs text-muted">{timeAgo(approval.created_at)}</span>
+    <article className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4 shadow-card">
+      <div>
+        <div className="flex items-baseline justify-between gap-2">
+          <h3 className="font-semibold">{approval.tool_name === "issue_refund" ? "Refund request" : "Email request"}</h3>
+          <span className="whitespace-nowrap text-xs text-muted">{timeAgo(approval.created_at)}</span>
+        </div>
+        <p className="mt-0.5 break-all text-sm text-muted">{approval.customer_email ?? "Unknown customer"}</p>
       </div>
-      <p className="text-sm text-muted">Customer: {approval.customer_email ?? "unknown"}</p>
 
       {approval.tool_name === "issue_refund" ? (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
           <dt className="text-muted">Order</dt>
-          <dd>#{String(input.order_number)}</dd>
+          <dd className="font-mono">#{String(input.order_number)}</dd>
           <dt className="text-muted">Amount</dt>
-          <dd className="font-semibold">{Number(input.amount).toFixed(2)}</dd>
+          <dd className="font-mono font-semibold tabular-nums">{Number(input.amount).toFixed(2)}</dd>
           <dt className="text-muted">Reason</dt>
           <dd>{String(input.reason)}</dd>
         </dl>
       ) : (
         <div className="text-sm">
-          <p>
-            <span className="text-muted">To:</span> {String(input.to)}
-          </p>
-          <p>
-            <span className="text-muted">Subject:</span> {String(input.subject)}
-          </p>
-          <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-background p-3 font-sans">
-            {String(input.body)}
-          </pre>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+            <dt className="text-muted">To</dt>
+            <dd className="break-all">{String(input.to)}</dd>
+            <dt className="text-muted">Subject</dt>
+            <dd>{String(input.subject)}</dd>
+          </dl>
+          <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 font-sans">{String(input.body)}</pre>
         </div>
       )}
-      <p className="text-xs text-muted">{approval.summary}</p>
+      <p className="text-sm text-muted">{approval.summary}</p>
 
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Note for the agent (optional; shared with the customer if you reject)"
+        aria-label="Note for the agent"
         rows={2}
-        className="rounded-md border border-line bg-background px-2 py-1.5 text-sm"
+        className="field"
       />
       {error && <p className="text-sm text-danger">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          onClick={() => decide(true)}
-          disabled={submitting}
-          className="flex-1 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:text-black"
-        >
+      <div className="mt-auto flex gap-2">
+        <button onClick={() => decide(true)} disabled={submitting} className="btn btn-primary flex-1">
           Approve
         </button>
-        <button
-          onClick={() => decide(false)}
-          disabled={submitting}
-          className="flex-1 rounded-md border border-danger/40 px-3 py-2 text-sm font-medium text-danger disabled:opacity-50"
-        >
+        <button onClick={() => decide(false)} disabled={submitting} className="btn btn-danger flex-1">
           Reject
         </button>
       </div>
@@ -224,13 +211,10 @@ function PendingCard({
   );
 }
 
-function StatusBadge({ status }: { status: ApprovalRequest["status"] }) {
-  const styles: Record<string, string> = {
-    executed: "bg-accent-soft text-accent",
-    approved: "bg-accent-soft text-accent",
-    rejected: "bg-danger-soft text-danger",
-    failed: "bg-danger-soft text-danger",
-    pending: "bg-warn-soft text-warn",
-  };
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>{status}</span>;
-}
+const STATUS_TONES: Record<ApprovalRequest["status"], Tone> = {
+  executed: "ok",
+  approved: "ok",
+  rejected: "danger",
+  failed: "danger",
+  pending: "warn",
+};
