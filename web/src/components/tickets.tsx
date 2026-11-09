@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 
+import { Badge, Banner, EmptyState, PageHeader, SkeletonRows, type Tone } from "@/components/ui";
 import { detailMessage } from "@/lib/errors";
 import { timeAgo } from "@/lib/time";
 import type { Ticket } from "@/lib/types";
@@ -10,17 +11,17 @@ import { usePolling } from "@/lib/use-polling";
 const POLL_MS = 5000;
 const API_LIMIT = 100; // GET /tickets returns at most this many by default
 
-const PRIORITY_STYLES: Record<Ticket["priority"], string> = {
-  low: "bg-background text-muted",
-  normal: "bg-background text-muted",
-  high: "bg-warn-soft text-warn",
-  urgent: "bg-danger-soft text-danger",
+const PRIORITY_TONES: Record<Ticket["priority"], Tone> = {
+  low: "neutral",
+  normal: "neutral",
+  high: "warn",
+  urgent: "danger",
 };
 
-const STATUS_STYLES: Record<Ticket["status"], string> = {
-  open: "bg-warn-soft text-warn",
-  pending: "bg-warn-soft text-warn",
-  resolved: "bg-accent-soft text-accent",
+const STATUS_TONES: Record<Ticket["status"], Tone> = {
+  open: "warn",
+  pending: "warn",
+  resolved: "ok",
 };
 
 export function Tickets() {
@@ -47,40 +48,42 @@ export function Tickets() {
   const count = tickets.length >= API_LIMIT ? `(latest ${API_LIMIT})` : tickets.length > 0 ? `(${tickets.length})` : "";
 
   return (
-    <div className="mx-auto w-full max-w-5xl overflow-y-auto px-4 py-6">
-      <h1 className="text-xl font-semibold">Support tickets {count}</h1>
-      <p className="text-sm text-muted">Follow-ups the agent has opened for the support team. Tickets don&apos;t need approval.</p>
+    <div className="mx-auto w-full max-w-4xl px-4 py-8 md:px-6">
+      <PageHeader title={`Support tickets ${count}`.trim()} description="Follow-ups the agent has opened for the support team. Tickets don't need approval." />
 
-      {error && <p className="mt-4 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p>}
-
-      {loaded && tickets.length === 0 && !error && (
-        <p className="mt-6 rounded-lg border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No tickets yet. Report a problem in the chat that needs a person, like a missing package, to see one appear here.
-        </p>
+      {error && (
+        <div className="mt-4">
+          <Banner tone="danger">{error}</Banner>
+        </div>
       )}
 
-      <div className="mt-6 grid gap-4">
-        {tickets.map((ticket) => (
-          <article key={ticket.ticket_number} className="flex flex-col gap-2 rounded-lg border border-line bg-surface p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted">#{ticket.ticket_number}</span>
-              <h2 className="font-medium">{ticket.subject}</h2>
-              <span className="ml-auto whitespace-nowrap text-xs text-muted">{timeAgo(ticket.created_at)}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-              <span>{[ticket.customer_name, ticket.customer_email].filter(Boolean).join(" · ") || "Unknown customer"}</span>
-              {ticket.order_number != null && <span>· Order #{ticket.order_number}</span>}
-              <Badge className={PRIORITY_STYLES[ticket.priority]}>{ticket.priority}</Badge>
-              <Badge className={STATUS_STYLES[ticket.status]}>{ticket.status}</Badge>
-            </div>
-            <p className="whitespace-pre-wrap text-sm">{ticket.description}</p>
-          </article>
-        ))}
+      <div className="mt-8">
+        {!loaded && <SkeletonRows count={3} className="h-24" />}
+        {loaded && tickets.length === 0 && !error && (
+          <EmptyState>No tickets yet. Report a problem in the chat that needs a person, like a missing package, to see one appear here.</EmptyState>
+        )}
+
+        {tickets.length > 0 && (
+          <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
+            {tickets.map((ticket) => (
+              <li key={ticket.ticket_number} className="flex flex-col gap-1.5 px-4 py-4">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-sm text-muted">#{ticket.ticket_number}</span>
+                  <h2 className="min-w-0 font-semibold">{ticket.subject}</h2>
+                  <span className="ml-auto whitespace-nowrap text-xs text-muted">{timeAgo(ticket.created_at)}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+                  <span className="break-all">{[ticket.customer_name, ticket.customer_email].filter(Boolean).join(" · ") || "Unknown customer"}</span>
+                  {ticket.order_number != null && <span>· Order #{ticket.order_number}</span>}
+                  <Badge tone={PRIORITY_TONES[ticket.priority]}>{ticket.priority}</Badge>
+                  <Badge tone={STATUS_TONES[ticket.status]}>{ticket.status}</Badge>
+                </div>
+                <p className="max-w-[75ch] whitespace-pre-wrap text-sm">{ticket.description}</p>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
-}
-
-function Badge({ className, children }: { className: string; children: React.ReactNode }) {
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>{children}</span>;
 }
