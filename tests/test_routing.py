@@ -1,6 +1,13 @@
 import yaml
 
-from agent.loop import _close_dangling_tool_uses, _request_messages, transcript
+from agent.loop import (
+    REFUSAL_REPLY,
+    REFUSED_MESSAGE,
+    _close_dangling_tool_uses,
+    _mark_refused_turn,
+    _request_messages,
+    transcript,
+)
 from agent.router import ROUTER_SYSTEM, customer_messages
 from agent.specialists import SPECIALISTS, handoff_note
 from evals.route_eval import ADVERSARIAL_ROUTES, grid_route
@@ -41,6 +48,34 @@ def test_a_note_left_without_a_reply_is_closed_by_an_assistant_turn():
 def test_notes_are_not_customer_text_or_shown_in_the_chat():
     assert customer_messages(HISTORY) == ["My tent arrived damaged.", "Photos attached."]
     assert [i["role"] for i in transcript({"messages": HISTORY}, [])] == ["user", "assistant", "user"]
+
+
+def test_a_refused_turn_is_hidden_from_claude_but_stays_in_the_chat():
+    tool_use = {"type": "tool_use", "id": "t1", "name": "get_order", "input": {}}
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": [{"type": "text", "text": "Hi!"}]},
+        {"role": "user", "content": "Something harmful"},
+        {"role": "system", "content": NOTE},
+        {"role": "assistant", "content": [tool_use]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "{}"}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "Partial reply"}]},
+    ]
+    _mark_refused_turn(messages)
+    messages.append({"role": "user", "content": "Where is my order?"})
+
+    sent = _request_messages(messages, "claude-sonnet-5-5")
+    assert sent == [
+        messages[0],
+        messages[1],
+        {"role": "user", "content": REFUSED_MESSAGE},
+        {"role": "system", "content": NOTE},
+        {"role": "assistant", "content": REFUSAL_REPLY},
+        messages[-1],
+    ]
+    assert customer_messages(messages) == ["Hello", "Where is my order?"]
+    shown = [i.get("text") for i in transcript({"messages": messages}, []) if i["role"] in ("user", "assistant")]
+    assert "Something harmful" in shown and "Partial reply" in shown
 
 
 def test_only_billing_can_refund_and_every_specialist_can_search():

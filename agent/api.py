@@ -34,7 +34,6 @@ import hmac
 import json
 import logging
 import os
-import sys
 import time
 import weakref
 from collections.abc import Coroutine
@@ -43,21 +42,20 @@ from contextlib import asynccontextmanager
 import anthropic
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from mcp import Client, StdioServerParameters
+from mcp import Client
 from pydantic import BaseModel, Field
 
 from agent import spend, store
 from agent.guardrails import RateLimiter
 from agent.loop import Agent, transcript
 from agent.store import in_thread
-from agent.tools import Toolbox
+from agent.tools import Toolbox, mcp_server_params
 from agent.tracing import Tracer
-from ingestion.config import REPO_ROOT, require_env
+from ingestion.config import require_env
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("agent")
 
-MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
 RESUME_RETRY_SECONDS = 15  # after a failed resume, wait this long before trying again
 API_SECRET = os.getenv("AGENT_API_SECRET", "")
 
@@ -136,13 +134,6 @@ def all_decided(conversation: dict, approvals: list[dict]) -> bool:
     return conversation["status"] == "awaiting_approval" and all(
         statuses.get(i) not in (None, "pending") for i in pending.get("awaiting", [])
     )
-
-
-def mcp_server_params() -> StdioServerParameters:
-    """The MCP client gives a server process only a few safe variables like PATH, so pass the ones it needs.
-    Locally the server would also find them in .env, but the container has no .env."""
-    env = {name: require_env(name) for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")}
-    return StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)], env=env)
 
 
 @asynccontextmanager

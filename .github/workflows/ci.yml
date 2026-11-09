@@ -72,7 +72,7 @@ jobs:
       - name: API image imports and includes the MCP server
         run: >-
           docker run --rm support-agent-api:ci python -c
-          "import agent.api, pathlib; assert pathlib.Path(agent.api.MCP_SERVER).is_file(); print('ok')"
+          "import agent.api, agent.tools, pathlib; assert pathlib.Path(agent.tools.MCP_SERVER).is_file(); print('ok')"
       - name: Web image serves pages behind the password
         run: |
           docker run -d --name web -p 3000:3000 -e DEMO_PASSWORD=ci support-agent-web:ci

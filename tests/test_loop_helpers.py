@@ -1,7 +1,21 @@
+import asyncio
 from types import SimpleNamespace
 
-from agent.loop import INTERRUPTED, _cited_sources, _close_dangling_tool_uses, _history_content, transcript
+from agent import store
+from agent.loop import (
+    EMPTY_REPLY,
+    INTERRUPTED,
+    Agent,
+    _cited_sources,
+    _close_dangling_tool_uses,
+    _history_content,
+    transcript,
+)
 from agent.pricing import cost_usd
+
+
+async def _no_check(*_):
+    pass
 
 
 class Block(SimpleNamespace):
@@ -65,6 +79,45 @@ def test_cited_sources_are_unique_and_ordered():
         {"type": "tool_use"},
     ]
     assert _cited_sources(blocks) == ["B", "A"]
+
+
+def run_turn(monkeypatch, content, stop_reason):
+    monkeypatch.setattr(store, "get_customer_by_email", lambda _: {"name": "Maya", "email": "maya@example.com"})
+    monkeypatch.setattr(store, "save_conversation", lambda _: None)
+    agent = Agent(None, None)
+
+    async def reply(*_):
+        return SimpleNamespace(content=content, stop_reason=stop_reason)
+
+    agent._stream = reply
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    conversation = {"status": "active", "customer_email": "maya@example.com", "created_at": "2026-11-09T00:00:00",
+                    "messages": [{"role": "user", "content": "hi"}]}
+    asyncio.run(agent._run(conversation, emit))
+    return conversation["messages"][-1], events
+
+
+def test_an_empty_or_thinking_only_reply_is_never_kept(monkeypatch):
+    for content in ([], [Block(type="thinking", thinking="x")], [Block(type="text", text="  ")]):
+        last, events = run_turn(monkeypatch, content, "end_turn")
+        assert last == {"role": "assistant", "content": EMPTY_REPLY}
+        assert {"type": "text", "delta": EMPTY_REPLY} in events
+
+
+def test_a_cut_off_tool_call_keeps_no_thinking_only_reply(monkeypatch):
+    content = [Block(type="thinking", thinking="x"), Block(type="tool_use", id="t1", name="get_order", input={})]
+    last, _ = run_turn(monkeypatch, content, "max_tokens")
+    assert last == {"role": "assistant", "content": EMPTY_REPLY}
+
+
+def test_a_normal_reply_is_stored_unchanged(monkeypatch):
+    monkeypatch.setattr(Agent, "_check_reply", _no_check)
+    last, _ = run_turn(monkeypatch, [Block(type="text", text="Hello")], "end_turn")
+    assert last == {"role": "assistant", "content": [{"type": "text", "text": "Hello"}]}
 
 
 def test_cost_includes_cache_rates():

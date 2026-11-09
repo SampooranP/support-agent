@@ -83,5 +83,5 @@ The image, the keys and the deploy role stay in `base`. Vercel keeps serving the
 - **Logs:** `aws logs tail /ecs/support-agent-api --follow`
 - **Spend:** the `daily_spend` table in the demo Supabase project shows today's Claude spend. Once it reaches the cap, new messages are refused until 00:00 UTC.
 - **Nightly reset:** `.github/workflows/reset-demo.yml` runs `reset_demo_data()` on the demo project at 04:00 UTC. You can also run it by hand from the Actions tab.
-- **Run one task only.** Conversation locks, rate limits and resume scheduling live in the process's memory. That's why `desired_count` is limited to 0 or 1, and a deploy stops the old task before starting the new one, which means a few seconds of downtime per deploy.
+- **Run one task only.** Conversation locks, rate limits and resume scheduling live in the process's memory. That's why `desired_count` is limited to 0 or 1, and a deploy stops the old task before starting the new one, which means about a minute and a half of downtime per deploy.
 - **State:** each stack's Terraform state is a local file in its folder (git-ignored). Keep it, or `destroy` won't know what to remove. For a team you'd move it to an S3 backend.
