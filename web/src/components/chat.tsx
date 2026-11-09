@@ -18,6 +18,7 @@ import type {
 import { SPECIALIST_TITLES } from "@/lib/types";
 
 const POLL_MS = 2500;
+const RECOVER_ATTEMPTS = 12; // about 30 seconds of looking for a reply the broken stream didn't deliver
 
 const SUGGESTIONS: Record<string, string[]> = {
   "maya.chen@example.com": ["My order #1042 arrived with two snapped tent poles. Can I get a refund?", "Can I still return the earbuds from order 1043?"],
@@ -82,6 +83,36 @@ export function Chat() {
     if (previousStatus.current !== "ready" && status === "ready") refresh();
     previousStatus.current = status;
   }, [status, refresh]);
+
+  // The agent saves its reply even when the stream to the browser breaks, so fetch that instead of showing an error.
+  useEffect(() => {
+    const id = conversationRef.current;
+    if (status !== "error" || !error || !id || !isStreamFailure(error)) return;
+    const sent = messages.filter((m) => m.role === "user").length;
+    let cancelled = false;
+    (async () => {
+      for (let attempt = 0; attempt < RECOVER_ATTEMPTS && !cancelled; attempt++) {
+        const res = await fetch(`/api/conversations/${id}`).catch(() => null);
+        if (cancelled) return;
+        if (res?.ok) {
+          const conversation = (await res.json()) as Conversation;
+          const saved = conversation.items.filter((item) => item.role === "user").length;
+          if (cancelled) return;
+          if (saved >= sent && conversation.items.at(-1)?.role !== "user") {
+            setConversationStatus(conversation.status);
+            setSpecialist(conversation.specialist ? (SPECIALIST_TITLES[conversation.specialist] ?? null) : null);
+            setMessages(toUIMessages(conversation.items));
+            clearError();
+            return;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [status, error, messages, setMessages, clearError]);
 
   // While a refund or email is waiting for a supervisor, poll until the conversation resumes.
   useEffect(() => {
@@ -310,6 +341,16 @@ function Banner({ tone, children }: { tone: "warn" | "ok" | "danger"; children: 
     danger: "border-danger/30 bg-danger-soft text-danger",
   };
   return <div className={`rounded-lg border px-4 py-3 text-sm ${styles[tone]}`}>{children}</div>;
+}
+
+/** API refusals (rate limit, budget) arrive as a JSON body; anything else means the connection broke. */
+function isStreamFailure(error: Error): boolean {
+  try {
+    JSON.parse(error.message);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function errorMessage(error: Error): string {

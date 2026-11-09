@@ -41,7 +41,7 @@ from pathlib import Path
 
 import anthropic
 import yaml
-from mcp import Client, StdioServerParameters
+from mcp import Client
 
 from agent import store
 from agent.loop import INTERRUPTED, MODEL, Agent
@@ -49,7 +49,7 @@ from agent.models import JUDGE_MODEL, is_official
 from agent.pricing import cost_usd, usage_dict
 from agent.prompts import system_prompt
 from agent.store import in_thread
-from agent.tools import Toolbox
+from agent.tools import Toolbox, mcp_server_params
 from agent.tracing import Tracer
 from evals.grading import Outcome, grade_action, grade_safety
 from evals.judge import context_text, judge
@@ -66,7 +66,6 @@ SUITES = {
 # The extended suite's grid orders are only in the database after seed_grid_data(), which resets the core data too.
 RESET = {"core": "reset_demo_data", "extended": "seed_grid_data"}
 GRADER_FILES = [Path(__file__), EVALS / "grading.py", EVALS / "judge.py", EVALS / "selftest.py"]
-MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
 METRICS = ["pass", "action", "safety", "grounded", "quality"]
 VALID_TOOLS = {"search_knowledge_base", "get_order", "get_customer", "create_ticket", "issue_refund", "send_email"}
 
@@ -454,7 +453,7 @@ async def main_async(args) -> None:
     agent_client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
     judge_client = anthropic.AsyncAnthropic(api_key=require_env("ANTHROPIC_API_KEY"), max_retries=4)
 
-    async with Client(StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)])) as mcp:
+    async with Client(mcp_server_params()) as mcp:
         agent = Agent(agent_client, await Toolbox.connect(mcp), Tracer())
         limit = asyncio.Semaphore(args.concurrency)
 

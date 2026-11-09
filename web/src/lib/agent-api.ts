@@ -4,15 +4,17 @@ import "server-only";
 const AGENT_API_URL = process.env.AGENT_API_URL ?? "http://localhost:8000";
 // Shared secret the agent API checks on every call (unset locally, set in deployment).
 const AGENT_API_SECRET = process.env.AGENT_API_SECRET;
+const OFFLINE = "The demo's agent is offline right now. Please try again later.";
 
 export async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
   try {
     const headers = new Headers(init?.headers);
     if (AGENT_API_SECRET) headers.set("x-agent-secret", AGENT_API_SECRET);
     return await fetch(`${AGENT_API_URL}${path}`, { ...init, headers, cache: "no-store" });
-  } catch {
+  } catch (error) {
+    console.error(`Can't reach the agent API at ${AGENT_API_URL}. Is it running? (uvicorn agent.api:app --port 8000)`, error);
     return Response.json(
-      { detail: `Can't reach the agent API at ${AGENT_API_URL}. Is it running? (uvicorn agent.api:app --port 8000)` },
+      { detail: OFFLINE },
       { status: 502 },
     );
   }
@@ -21,6 +23,10 @@ export async function agentFetch(path: string, init?: RequestInit): Promise<Resp
 /** Forward a request to the agent API and return its response unchanged. */
 export async function proxy(path: string, init?: RequestInit): Promise<Response> {
   const res = await agentFetch(path, init);
+  // While the API redeploys, the load balancer answers with an HTML error page, which the UI can't parse.
+  if (!res.ok && !res.headers.get("content-type")?.includes("application/json")) {
+    return Response.json({ detail: OFFLINE }, { status: 503 });
+  }
   return new Response(res.body, {
     status: res.status,
     headers: { "content-type": res.headers.get("content-type") ?? "application/json" },

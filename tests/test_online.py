@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from agent import api, spend
+from agent import api, spend, tools
 
 client = TestClient(api.app)  # no `with`, so the lifespan (Claude client, MCP server) doesn't start
 
@@ -21,7 +21,7 @@ def test_other_endpoints_need_the_secret(monkeypatch):
 def test_mcp_server_is_given_the_database_settings(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
-    assert api.mcp_server_params().env == {
+    assert tools.mcp_server_params().env == {
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "test-key",
     }

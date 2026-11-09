@@ -36,7 +36,8 @@ class Route(BaseModel):
 
 def customer_messages(messages: list[dict]) -> list[str]:
     """The customer's own messages in a stored history (tool results and notes aren't customer text)."""
-    return [m["content"] for m in messages if m["role"] == "user" and isinstance(m["content"], str)]
+    return [m["content"] for m in messages
+            if m["role"] == "user" and isinstance(m["content"], str) and "refused" not in m]
 
 
 async def route(client: anthropic.AsyncAnthropic, messages: list[dict], current: str | None) -> tuple[str, object | None]:

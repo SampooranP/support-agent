@@ -12,17 +12,29 @@ checks the request, records it as an approval, and runs it only after a human ap
 """
 
 import json
+import sys
 from dataclasses import dataclass
 from typing import Any
 
 import anyio
 import jsonschema
-from mcp import Client
+from mcp import Client, StdioServerParameters
 
+from ingestion.config import REPO_ROOT, require_env
 from ingestion.embedder import embed_query
 from ingestion.store import match_chunks
 
+MCP_SERVER = REPO_ROOT / "mcp-server" / "server.py"
+
 RISKY_TOOLS = {"issue_refund", "send_email"}
+
+
+def mcp_server_params() -> StdioServerParameters:
+    """The MCP client gives a server process only a few safe variables like PATH, so pass the ones it needs.
+    Locally the server would also find them in .env, but containers and CI have no .env."""
+    env = {name: require_env(name) for name in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")}
+    return StdioServerParameters(command=sys.executable, args=[str(MCP_SERVER)], env=env)
+
 
 SEARCH_TOOL = {
     "name": "search_knowledge_base",

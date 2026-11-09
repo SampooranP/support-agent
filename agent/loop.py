@@ -138,10 +138,18 @@ class Agent:
                 if response.stop_reason == "refusal" or (response.stop_reason == "max_tokens" and tool_uses):
                     # Don't run tools from a declined or cut-off reply, and keep no unanswered tool_use in
                     # history (the next request would be rejected). Keep any text so the history stays valid.
-                    kept = [b for b in content if b["type"] != "tool_use"]
-                    messages.append({"role": "assistant", "content": kept or "Sorry, I can't help with that."})
+                    kept = [b for b in content if b["type"] == "text"]
+                    fallback = REFUSAL_REPLY if response.stop_reason == "refusal" else EMPTY_REPLY
+                    messages.append({"role": "assistant", "content": kept if _has_text(kept) else fallback})
+                    if response.stop_reason == "refusal":
+                        _mark_refused_turn(messages)
                     await emit({"type": "error", "message": "The request was declined." if response.stop_reason
                                 == "refusal" else "The reply was too long and got cut off."})
+                    break
+                if not tool_uses and not _has_text(content):
+                    # An empty or thinking-only reply left in history would get every later request rejected.
+                    messages.append({"role": "assistant", "content": EMPTY_REPLY})
+                    await emit({"type": "text", "delta": EMPTY_REPLY})
                     break
                 messages.append({"role": "assistant", "content": content})
                 if not tool_uses:
@@ -308,10 +316,45 @@ def _close_dangling_tool_uses(conversation: dict) -> None:
         ]})
 
 
+REFUSAL_REPLY = "Sorry, I can't help with that."
+REFUSED_MESSAGE = "(This customer message was removed because a safety filter declined it.)"
+EMPTY_REPLY = "Sorry, I didn't manage to write a reply. Could you say that again?"
+
+
+def _has_text(content: list[dict]) -> bool:
+    return any(b["type"] == "text" and b["text"].strip() for b in content)
+
+
+def _mark_refused_turn(messages: list[dict]) -> None:
+    """Flag the turn a safety filter declined. If Claude kept seeing it, every later message in the
+    conversation would be declined too. The chat still shows it (see _hide_refused_turns)."""
+    start = max(i for i, m in enumerate(messages) if m["role"] == "user" and isinstance(m["content"], str))
+    turn = [m for m in messages[start:] if m["role"] != "system"]
+    for message in turn:
+        message["refused"] = "work"
+    turn[0]["refused"], turn[-1]["refused"] = "customer", "reply"
+
+
+def _hide_refused_turns(messages: list[dict]) -> list[dict]:
+    """The history without declined content: a placeholder exchange replaces each declined turn."""
+    out: list[dict] = []
+    for message in messages:
+        kind = message.get("refused")
+        if kind is None:
+            out.append(message)
+        elif kind == "customer":
+            out.append({"role": "user", "content": REFUSED_MESSAGE})
+        elif kind == "reply":
+            out.append({"role": "assistant", "content": REFUSAL_REPLY})
+    return out
+
+
 def _request_messages(messages: list[dict], model: str) -> list[dict]:
     """The stored history as the model takes it. Models without mid-conversation system messages
     (Haiku 5.5) get each specialist note as a text block on the customer message before it. The
     conversion is the same on every request, so the history the model sees is still append-only."""
+    if any("refused" in m for m in messages):
+        messages = _hide_refused_turns(messages)
     if supports_system_messages(model):
         return messages
     out: list[dict] = []
