@@ -1,16 +1,15 @@
 # Support Agent
 
-An AI customer-support agent that answers from a company knowledge base, takes real actions through MCP tools, asks a human before risky actions, and is measured with an automated eval suite.
-
-> 🚧 Work in progress. See the [roadmap](#roadmap).
+An AI customer-support agent for Lumen & Pine, a fictional outdoor and home goods store. It answers from a company knowledge base, takes real actions through MCP tools, asks a human before risky actions, and is measured with an automated eval suite.
 
 ## How it works
 
 1. A customer asks a question (e.g. "My order #1042 arrived damaged, can I get a refund?").
-2. The agent plans its steps and **searches the support docs (RAG)** for the relevant policy.
-3. It calls **MCP tools** to look up the order and customer.
-4. Risky actions (refunds, emails) **pause for human approval** in a dashboard.
-5. It replies to the customer, citing the policy it used.
+2. A small **router** hands the conversation to a billing, shipping, tech-support or general specialist, each limited to its own tools.
+3. The specialist **searches the support docs (RAG)** for the relevant policy.
+4. It calls **MCP tools** to look up the order and customer.
+5. Risky actions (refunds, emails) **pause for human approval** in a dashboard.
+6. It replies to the customer, citing the policy it used.
 
 Every run is traced, and an **eval suite** scores the agent on a set of test tickets.
 
@@ -18,10 +17,11 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 
 - **RAG over documents**: ingestion pipeline (load → chunk → embed → store) with pgvector similarity search
 - **MCP server**: `get_order`, `get_customer`, `create_ticket`, `issue_refund`, `send_email`
-- **Human-in-the-loop**: approve/reject dashboard for risky tool calls
+- **Specialist routing**: a Haiku router and four specialists, with tool access enforced in code
+- **Human-in-the-loop**: approve/reject dashboard for risky tool calls, enforced again in the database
 - **Evals**: test tickets scored on correct action, grounding, answer quality (LLM-as-judge) and safety
 - **Observability**: tracing of every model and tool call, with cost and latency
-- **Streaming UI**: live chat replies and tool-status updates
+- **Streaming UI**: live chat replies and tool-status updates, plus pages that explain the demo customers and the system
 
 ## Tech stack
 
@@ -40,8 +40,8 @@ Every run is traced, and an **eval suite** scores the agent on a set of test tic
 ```
 ingestion/    load, chunk, embed docs → pgvector
 mcp-server/   order, customer, ticket, refund and email tools
-agent/        agent loop, prompts, approval logic, memory
-web/          chat UI + approvals dashboard + tickets list
+agent/        agent loop, router, specialists, prompts, guardrails, approval logic
+web/          chat UI, approvals dashboard, tickets list, customer and how-it-works pages
 evals/        test tickets, scoring scripts, results
 docs/         sample company knowledge base
 supabase/     database migrations
@@ -176,7 +176,7 @@ Inside the demo, customers are still picked from a list rather than signing in, 
 
 ### Chat UI and approvals dashboard
 
-[`web/`](web/) is a Next.js app with two pages. Run the agent API and the web app in two terminals:
+[`web/`](web/) is a Next.js app. Run the agent API and the web app in two terminals:
 
 ```bash
 uvicorn agent.api:app --port 8000      # terminal 1, from the repo root
@@ -186,6 +186,18 @@ cd web && npm run dev                  # terminal 2, then open http://localhost:
 - **Chat** (`/`): pick a demo customer and ask a question, such as Maya's "My order #1042 arrived with two snapped tent poles. Can I get a refund?" Replies stream in with tool steps, cited sources, and an approval card when the agent asks to refund or email.
 - **Approvals** (`/approvals`): the supervisor's queue. Approve or reject each request, optionally with a note. The chat picks up the outcome within a few seconds and the agent tells the customer what happened.
 - **Tickets** (`/tickets`): the follow-ups the agent has opened for the support team. Tickets don't need approval, so they're created straight away.
+- **Customers** (`/customers`): a backstory, the orders on file and the scenarios to try for each demo customer. "Try this" opens the chat with the message ready to send.
+- **How it works** (`/how-it-works`): one refund followed through the whole system, plus each specialist's tools, the safeguards and the eval results.
+
+The five demo customers are each set up to test different rules:
+
+| Customer | Situation | What it tests |
+|---|---|---|
+| Maya Chen | Tent arrived with snapped poles; earbuds past the return window | Refund approval, the 30-day window, other customers' data, a fake approval claim |
+| Jordan Alvarez | Kettle in transit to Canada; a Final Sale footprint | Tracking, Final Sale rules and their damage exception |
+| Priya Natarajan | A $778.32 order delivered 10 days ago | The 7-day damage window, warranty claims, the return process |
+| Sam Okafor | Wrong kettle ordered minutes ago; a cancelled tent | The 1-hour cancellation window, refunds that aren't owed, product troubleshooting, off-topic requests |
+| Leo Martins | Overnight package lost for 25 days | Lost-package tickets, attempts to extract the system prompt |
 
 The browser only talks to the Next.js server; its `/api/*` routes forward to the agent API (set `AGENT_API_URL` if it isn't on `http://localhost:8000`).
 
@@ -263,10 +275,12 @@ The public demo runs the web app on Vercel and the agent API on AWS ECS Fargate,
 - [x] Sample knowledge base + ingestion pipeline + basic RAG Q&A
 - [x] MCP server with order and customer tools
 - [x] Human approval flow, dashboard and streaming chat UI
-- [ ] Eval suite, tracing, guardrails and CI
-- [ ] Multi-agent routing (billing / shipping / tech support), deployment
+- [x] Eval suite, tracing, guardrails and CI
+- [x] Multi-agent routing (billing / shipping / tech support), deployment
 
 ## Eval results
+
+The latest official run (v2, below) passes 75% of the 20 core cases, with 100% on right action and safety. Twenty cases is a small sample, so read the trend with the confidence intervals in mind.
 
 Baseline: the agent as built in phases 1-3, before any changes made because of the evals. One conversation per case; the ranges are 95% confidence intervals.
 
